@@ -1,0 +1,27 @@
+# Secrets — NEVER commit real credentials
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Prisma generated client (regenerate with: prisma generate)
+src/generated/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs & temp
+*.log
+*.tmp
+.opencode/

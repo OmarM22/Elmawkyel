@@ -1,0 +1,229 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── ENUMS ───────────────────────────────────────────────────────────────────
+
+enum PersonType {
+  CRAFTSMAN
+  WORKER
+}
+
+enum ProjectStatus {
+  ACTIVE
+  COMPLETED
+  ON_HOLD
+  CANCELLED
+}
+
+enum WeekStatus {
+  OPEN
+  CLOSED
+  SETTLED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LEAVE
+}
+
+enum DayOfWeek {
+  SATURDAY
+  SUNDAY
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+}
+
+// ─── PERSON ──────────────────────────────────────────────────────────────────
+
+model Person {
+  id               String              @id @default(cuid())
+  name             String
+  type             PersonType
+  phone            String?
+  active           Boolean             @default(true)
+  // currentDailyRate is the LATEST rate — used for new assignments only
+  // Historical rates are preserved in ProjectAssignment.dailyRate and DailyAttendance.dailyRate
+  currentDailyRate Decimal              @db.Decimal(10, 2)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  assignments      ProjectAssignment[]
+  attendances      DailyAttendance[]
+  payments         Payment[]
+
+  @@index([active])
+  @@index([type])
+}
+
+// ─── PROJECT ─────────────────────────────────────────────────────────────────
+
+model Project {
+  id            String        @id @default(cuid())
+  name          String
+  startDate     DateTime      @db.Date
+  endDate       DateTime?     @db.Date
+  status        ProjectStatus @default(ACTIVE)
+  // Configured working days for this project (e.g., [SATURDAY, SUNDAY, MONDAY, TUESDAY, WEDNESDAY, THURSDAY])
+  workingDays   DayOfWeek[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  assignments   ProjectAssignment[]
+  weeks         Week[]
+  attendances   DailyAttendance[]
+  payments      Payment[]
+
+  @@index([status])
+}
+
+// ─── PROJECT ASSIGNMENT ──────────────────────────────────────────────────────
+// Links a person to a project with a date range and rate snapshot
+
+model ProjectAssignment {
+  id          String    @id @default(cuid())
+  personId    String
+  projectId   String
+  // Snapshot of the person's daily rate at the time of assignment
+  // This preserves historical rates even if Person.currentDailyRate changes
+  dailyRate   Decimal   @db.Decimal(10, 2)
+  startDate   DateTime  @db.Date
+  endDate     DateTime? @db.Date
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  person      Person    @relation(fields: [personId], references: [id])
+  project     Project   @relation(fields: [projectId], references: [id])
+  attendances DailyAttendance[]
+
+  @@unique([personId, projectId, startDate])
+  @@index([personId])
+  @@index([projectId])
+}
+
+// ─── WEEK ────────────────────────────────────────────────────────────────────
+// A project-specific working week with calculated boundaries
+
+model Week {
+  id          String     @id @default(cuid())
+  projectId   String
+  weekNumber  Int        // Sequential: 1, 2, 3...
+  startDate   DateTime   @db.Date
+  endDate     DateTime   @db.Date
+  status      WeekStatus @default(OPEN)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  project     Project    @relation(fields: [projectId], references: [id])
+  attendances DailyAttendance[]
+  payments    Payment[]
+
+  @@unique([projectId, weekNumber])
+  @@index([projectId, startDate])
+}
+
+// ─── DAILY ATTENDANCE (SOURCE OF TRUTH) ─────────────────────────────────────
+
+model DailyAttendance {
+  id             String           @id @default(cuid())
+  personId       String
+  projectId      String
+  assignmentId   String
+  weekId         String
+  date           DateTime         @db.Date
+  status         AttendanceStatus @default(PRESENT)
+  // CRITICAL: Snapshot of the daily rate at the time of attendance
+  // This ensures historical calculations never change when rates are updated
+  dailyRate      Decimal          @db.Decimal(10, 2)
+  // For future: partial days (hours worked). Default 1.0 = full day
+  hours          Decimal          @db.Decimal(3, 1) @default(1.0)
+  notes          String?
+  createdBy      String           // app User id (who recorded the row)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  person         Person           @relation(fields: [personId], references: [id])
+  project        Project          @relation(fields: [projectId], references: [id])
+  assignment     ProjectAssignment @relation(fields: [assignmentId], references: [id])
+  week           Week             @relation(fields: [weekId], references: [id])
+
+  // BUSINESS RULE: One attendance record per person per project per date
+  // This enforces "one project per person per day" at the database level
+  @@unique([personId, projectId, date])
+  @@index([personId, date])
+  @@index([projectId, date])
+  @@index([weekId])
+  @@index([date])
+}
+
+// ─── PAYMENT ─────────────────────────────────────────────────────────────────
+
+model Payment {
+  id          String   @id @default(cuid())
+  personId    String
+  projectId   String
+  weekId      String
+  amount      Decimal  @db.Decimal(10, 2)
+  paidAt      DateTime @default(now())
+  notes       String?
+  createdBy   String
+  createdAt   DateTime @default(now())
+
+  person      Person   @relation(fields: [personId], references: [id])
+  project     Project  @relation(fields: [projectId], references: [id])
+  week        Week     @relation(fields: [weekId], references: [id])
+
+  @@index([personId])
+  @@index([projectId])
+  @@index([weekId])
+}
+
+// ─── AUDIT LOG ───────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  entityType   String   // "DailyAttendance", "Person", "Project", etc.
+  entityId     String
+  action       String   // "CREATE", "UPDATE", "DELETE"
+  oldValues    Json?
+  newValues    Json?
+  performedBy  String   // User ID
+  performedAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([performedAt])
+}
+
+// ─── USER (internal system accounts — login only, no public registration) ────
+
+enum Role {
+  ADMIN
+  MANAGER
+  VIEWER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(VIEWER)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([active])
+  @@index([role])
+}
