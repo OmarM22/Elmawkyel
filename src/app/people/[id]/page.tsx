@@ -24,13 +24,11 @@ async function fetchLog(id: string): Promise<{ attendance: AttendanceRow[] }> {
 
 const STATUS_LABELS: Record<AttendanceRow["status"], string> = {
   PRESENT: "حاضر",
-  ABSENT: "غائب",
   LEAVE: "إجازة",
 };
 
 const STATUS_VARIANTS: Record<AttendanceRow["status"], "success" | "destructive" | "warning"> = {
   PRESENT: "success",
-  ABSENT: "destructive",
   LEAVE: "warning",
 };
 

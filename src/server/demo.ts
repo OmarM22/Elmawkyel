@@ -8,7 +8,10 @@
  * and replace these functions with Prisma queries (same return shapes).
  */
 import type {
+  AttendanceConflict,
   AttendanceRow,
+  DayCloseInfo,
+  OpenAssignment,
   PersonRow,
   PersonType,
   ProjectRow,
@@ -18,6 +21,7 @@ import type {
   UserRow,
   WeekStatus,
   WeekSummary,
+  WorkerStatement,
 } from "@/types";
 import { weekBounds, weekNumberFor } from "./weekcalc";
 
@@ -289,6 +293,43 @@ export async function updateProject(
   return { ...p };
 }
 
+/**
+ * Hard-delete a project. Without `force`, blocked (restrict) by attendance,
+ * payments, or a closed day. `force` (ADMIN-only, enforced at the API) wipes
+ * the project's attendance and payment rows together with it — permanent.
+ * Assignments, week-status entries and close records are always removed.
+ */
+export async function deleteProject(id: string, opts: { force?: boolean } = {}): Promise<true> {
+  const index = projects.findIndex((x) => x.id === id);
+  if (index < 0) throw new Error("المشروع غير موجود");
+  const blocked =
+    attendances.some((a) => a.projectId === id) ||
+    demoPayments.some((p) => p.projectId === id) ||
+    [...demoCloses.keys()].some((k) => k.startsWith(`${id}:`));
+  if (blocked && !opts.force) {
+    throw new Error("لا يمكن حذف هذا المشروع — توجد سجلات حضور أو مدفوعات مرتبطة به. ألغِه بدلاً من ذلك.");
+  }
+  if (opts.force) {
+    for (let i = attendances.length - 1; i >= 0; i--) {
+      if (attendances[i].projectId === id) attendances.splice(i, 1);
+    }
+    for (let i = demoPayments.length - 1; i >= 0; i--) {
+      if (demoPayments[i].projectId === id) demoPayments.splice(i, 1);
+    }
+  }
+  for (let i = demoAssignments.length - 1; i >= 0; i--) {
+    if (demoAssignments[i].projectId === id) demoAssignments.splice(i, 1);
+  }
+  for (const key of [...demoWeekStatus.keys()]) {
+    if (key.startsWith(`${id}:`)) demoWeekStatus.delete(key);
+  }
+  for (const key of [...demoCloses.keys()]) {
+    if (key.startsWith(`${id}:`)) demoCloses.delete(key);
+  }
+  projects.splice(index, 1);
+  return true;
+}
+
 // ─── Project assignments (workforce selection) ───────────────────────────────
 
 interface DemoAssignment {
@@ -363,6 +404,27 @@ export async function getProjectTeam(projectId: string): Promise<TeamMember[]> {
   return team.sort((a, b) => a.name.localeCompare(b.name, "ar"));
 }
 
+/** Every open assignment with denormalized names (quick-mark feed). */
+export async function listOpenAssignments(): Promise<OpenAssignment[]> {
+  const out: OpenAssignment[] = [];
+  for (const a of demoAssignments) {
+    if (a.endDate !== null) continue;
+    const person = await getPerson(a.personId);
+    const project = await getProject(a.projectId);
+    if (!person || !project) continue;
+    out.push({
+      personId: person.id,
+      personName: person.name,
+      personActive: person.active,
+      projectId: project.id,
+      projectName: project.name,
+      projectStatus: project.status,
+      workingDays: [...project.workingDays],
+    });
+  }
+  return out;
+}
+
 // ─── Attendance (source of truth) ────────────────────────────────────────────
 
 const attendances: StoredAttendance[] = [];
@@ -370,7 +432,7 @@ let seq = 1;
 
 export interface AttendanceInput {
   personId: string;
-  status: "PRESENT" | "ABSENT" | "LEAVE";
+  status: "PRESENT" | "LEAVE";
   notes?: string;
 }
 
@@ -393,16 +455,21 @@ export async function listAttendance(filter: {
  * Record a batch of attendance for one project + date.
  * Enforces: one record per (person, project, date) — upserts on conflict.
  * Snapshots the person's current daily rate at record time.
+ * UNIQUE(person, date) for PRESENT: a second payable mark elsewhere is
+ * skipped and reported (never duplicated). Throws on closed days.
  */
 export async function recordAttendanceBatch(args: {
   projectId: string;
   date: string;
   records: AttendanceInput[];
   createdBy: string;
-}): Promise<{ recorded: number; updated: number }> {
+}): Promise<{ recorded: number; updated: number; skipped: AttendanceConflict[] }> {
   const project = await getProject(args.projectId);
   if (!project) throw new Error("المشروع غير موجود");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error("التاريخ غير صالح");
+  if (demoCloses.has(`${args.projectId}:${args.date}`)) {
+    throw new Error("اليوم مغلق — لا يمكن التسجيل أو التعديل");
+  }
   const batchWeek = weekNumberFor(project.startDate, args.date);
   if ((demoWeekStatus.get(`${args.projectId}:${batchWeek}`) ?? "OPEN") === "SETTLED") {
     throw new Error("لا يمكن التسجيل — الأسبوع مسوّى");
@@ -410,9 +477,29 @@ export async function recordAttendanceBatch(args: {
 
   let recorded = 0;
   let updated = 0;
+  const skipped: AttendanceConflict[] = [];
   for (const r of args.records) {
     const person = await getPerson(r.personId);
     if (!person || !person.active) continue;
+    if (r.status === "PRESENT") {
+      const clash = attendances.find(
+        (a) =>
+          a.personId === r.personId &&
+          a.date === args.date &&
+          a.status === "PRESENT" &&
+          a.projectId !== args.projectId,
+      );
+      if (clash) {
+        skipped.push({
+          personId: person.id,
+          personName: person.name,
+          date: args.date,
+          existingProjectId: clash.projectId,
+          existingProjectName: clash.projectName,
+        });
+        continue;
+      }
+    }
     const existing = attendances.find(
       (a) => a.personId === r.personId && a.projectId === args.projectId && a.date === args.date,
     );
@@ -437,7 +524,7 @@ export async function recordAttendanceBatch(args: {
       recorded += 1;
     }
   }
-  return { recorded, updated };
+  return { recorded, updated, skipped };
 }
 
 /** Person detail with per-project aggregation derived from attendance. */
@@ -497,9 +584,14 @@ function buildDemoWeek(project: ProjectRow, weekNumber: number): WeekSummary | n
   if (rows.length === 0) return null;
   const bounds = weekBounds(project.startDate, rows[0].date);
 
-  const byPerson = new Map<string, { name: string; days: number; due: number }>();
+  const byPerson = new Map<string, { name: string; type: PersonType; days: number; due: number }>();
   for (const r of rows) {
-    const e = byPerson.get(r.personId) ?? { name: r.personName, days: 0, due: 0 };
+    const e = byPerson.get(r.personId) ?? {
+      name: r.personName,
+      type: people.find((x) => x.id === r.personId)?.type ?? "WORKER",
+      days: 0,
+      due: 0,
+    };
     e.days += 1;
     e.due += Math.round(r.dailyRate * 100) * r.hours;
     byPerson.set(r.personId, e);
@@ -522,6 +614,7 @@ function buildDemoWeek(project: ProjectRow, weekNumber: number): WeekSummary | n
   const dues = [...byPerson.entries()].map(([personId, v]) => ({
     personId,
     personName: v.name,
+    type: v.type,
     days: v.days,
     dueHalalas: v.due,
     paidHalalas: paidByPerson.get(personId) ?? 0,
@@ -636,6 +729,291 @@ export async function voidWeekPayment(
   fresh.status = status;
   demoAudit.push({ entityType: "Week", entityId: weekId, action: "VOID", performedBy });
   return { week: fresh };
+}
+
+// ─── Attendance day close ────────────────────────────────────────────────────
+
+const JS_DAY_TO_NAME = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+
+const demoCloses = new Map<string, { closedBy: string; closedAt: string }>();
+
+function closeKey(projectId: string, date: string): string {
+  return `${projectId}:${date}`;
+}
+
+function isWorkingDay(project: ProjectRow, date: string): boolean {
+  return project.workingDays.includes(JS_DAY_TO_NAME[new Date(`${date}T00:00:00.000Z`).getUTCDay()]);
+}
+
+export async function getDayClose(projectId: string, date: string): Promise<DayCloseInfo | null> {
+  const c = demoCloses.get(closeKey(projectId, date));
+  if (!c) return null;
+  return { projectId, date, closedBy: c.closedBy, closedAt: c.closedAt };
+}
+
+export async function isAttendanceDayClosed(projectId: string, date: string): Promise<boolean> {
+  return demoCloses.has(closeKey(projectId, date));
+}
+
+/**
+ * Close the day: locks it after review. No rows are created — attendance is
+ * recorded only for people actually marked. Reopening removes the lock.
+ */
+export async function closeAttendanceDay(
+  projectId: string,
+  date: string,
+  closedBy: string,
+): Promise<{ closed: true }> {
+  const project = await getProject(projectId);
+  if (!project) throw new Error("المشروع غير موجود");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("التاريخ غير صالح");
+  if (!isWorkingDay(project, date)) throw new Error("لا يمكن الإغلاق — هذا اليوم ليس من أيام عمل المشروع");
+  const key = closeKey(projectId, date);
+  if (demoCloses.has(key)) throw new Error("اليوم مغلق بالفعل");
+  const wn = weekNumberFor(project.startDate, date);
+  if ((demoWeekStatus.get(`${projectId}:${wn}`) ?? "OPEN") === "SETTLED") {
+    throw new Error("لا يمكن الإغلاق — الأسبوع مسوّى");
+  }
+  demoCloses.set(key, { closedBy, closedAt: new Date().toISOString() });
+  return { closed: true };
+}
+
+/** Reopen: removes the close record and unlocks the day. */
+export async function reopenAttendanceDay(
+  projectId: string,
+  date: string,
+): Promise<{ reopened: true }> {
+  const key = closeKey(projectId, date);
+  if (!demoCloses.has(key)) throw new Error("اليوم غير مغلق");
+  demoCloses.delete(key);
+  return { reopened: true };
+}
+
+/**
+ * Move a PRESENT mark to another project on the same day (same rate
+ * snapshot preserved). Both sides must be unlocked (not closed/settled).
+ */
+export async function moveAttendance(args: {
+  personId: string;
+  date: string;
+  toProjectId: string;
+}): Promise<{ moved: AttendanceRow }> {
+  const person = await getPerson(args.personId);
+  if (!person) throw new Error("الشخص غير موجود");
+  const toProject = await getProject(args.toProjectId);
+  if (!toProject) throw new Error("المشروع غير موجود");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error("التاريخ غير صالح");
+  const index = attendances.findIndex(
+    (a) =>
+      a.personId === args.personId &&
+      a.date === args.date &&
+      a.status === "PRESENT" &&
+      a.projectId !== args.toProjectId,
+  );
+  if (index < 0) throw new Error("لا يوجد حضور حاضر لنقله في هذا اليوم");
+  const source = attendances[index];
+  if (await isAttendanceDayClosed(source.projectId, args.date)) {
+    throw new Error("لا يمكن النقل — اليوم مغلق في المشروع الأصلي");
+  }
+  if (await isAttendanceDayClosed(args.toProjectId, args.date)) {
+    throw new Error("لا يمكن النقل — اليوم مغلق في المشروع الجديد");
+  }
+  const srcProject = await getProject(source.projectId);
+  if (!srcProject) throw new Error("المشروع غير موجود");
+  if ((demoWeekStatus.get(`${srcProject.id}:${weekNumberFor(srcProject.startDate, args.date)}`) ?? "OPEN") === "SETTLED") {
+    throw new Error("لا يمكن النقل — الأسبوع مسوّى في المشروع الأصلي");
+  }
+  if ((demoWeekStatus.get(`${toProject.id}:${weekNumberFor(toProject.startDate, args.date)}`) ?? "OPEN") === "SETTLED") {
+    throw new Error("لا يمكن النقل — الأسبوع مسوّى في المشروع الجديد");
+  }
+  if (
+    attendances.some(
+      (a) =>
+        a.personId === args.personId &&
+        a.date === args.date &&
+        a.status === "PRESENT" &&
+        a.projectId === args.toProjectId,
+    )
+  ) {
+    throw new Error("يوجد حضور مسجل بالفعل في المشروع الجديد");
+  }
+  attendances.splice(index, 1);
+  const moved: StoredAttendance = {
+    ...source,
+    id: `a${seq++}`,
+    projectId: toProject.id,
+    projectName: toProject.name,
+  };
+  attendances.push(moved);
+  return { moved: omit(moved, "createdBy") };
+}
+
+/**
+ * Workforce-first quick mark: mark PRESENT across every eligible project
+ * (open assignment covering the date, ACTIVE project, working day). PRESENT
+ * keeps UNIQUE(person, date): if payable presence exists anywhere that day,
+ * nothing is created and the conflict is reported.
+ */
+export async function quickMark(
+  personId: string,
+  date: string,
+  status: "PRESENT",
+  createdBy: string,
+): Promise<{ success: true; projects: { projectId: string; projectName: string }[]; skipped: AttendanceConflict[] }> {
+  const person = await getPerson(personId);
+  if (!person) throw new Error("الشخص غير موجود");
+  if (!person.active) throw new Error("الشخص غير نشط");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("التاريخ غير صالح");
+  const eligible: { project: ProjectRow }[] = [];
+  for (const a of demoAssignments) {
+    if (a.personId !== personId || a.endDate !== null || a.startDate > date) continue;
+    const project = await getProject(a.projectId);
+    if (!project || project.status !== "ACTIVE" || !isWorkingDay(project, date)) continue;
+    if (!eligible.some((e) => e.project.id === project.id)) eligible.push({ project });
+  }
+  const existing = attendances.find(
+    (a) => a.personId === personId && a.date === date && a.status === "PRESENT",
+  );
+  if (existing) {
+    return {
+      success: true,
+      projects: [],
+      skipped: [
+        {
+          personId,
+          personName: person.name,
+          date,
+          existingProjectId: existing.projectId,
+          existingProjectName: existing.projectName,
+        },
+      ],
+    };
+  }
+  const projects: { projectId: string; projectName: string }[] = [];
+  for (const { project } of eligible) {
+    const same = attendances.find(
+      (a) => a.personId === personId && a.projectId === project.id && a.date === date,
+    );
+    if (same) {
+      same.status = "PRESENT";
+      same.hours = 1;
+      same.dailyRate = person.currentDailyRate;
+    } else {
+      attendances.push({
+        id: `a${seq++}`,
+        personId: person.id,
+        personName: person.name,
+        projectId: project.id,
+        projectName: project.name,
+        date,
+        status: "PRESENT",
+        dailyRate: person.currentDailyRate,
+        hours: 1,
+        notes: null,
+        createdBy,
+      });
+    }
+    projects.push({ projectId: project.id, projectName: project.name });
+  }
+  return { success: true, projects, skipped: [] };
+}
+
+/** Full account statement of one worker across all projects and weeks. */
+export async function getWorkerStatement(personId: string): Promise<WorkerStatement> {
+  const person = await getPerson(personId);
+  if (!person) throw new Error("الشخص غير موجود");
+  const dues: WorkerStatement["dues"] = [];
+  for (const project of projects) {
+    const numbers = new Set<number>();
+    for (const a of attendances) {
+      if (a.projectId === project.id && a.status === "PRESENT") {
+        numbers.add(weekNumberFor(project.startDate, a.date));
+      }
+    }
+    for (const wn of numbers) {
+      const week = buildDemoWeek(project, wn);
+      if (!week) continue;
+      const due = week.dues.find((d) => d.personId === personId);
+      if (!due || due.dueHalalas <= 0) continue;
+      dues.push({
+        projectId: project.id,
+        projectName: project.name,
+        weekId: week.id,
+        weekNumber: wn,
+        weekStartDate: week.startDate,
+        dueHalalas: due.dueHalalas,
+        paidHalalas: due.paidHalalas,
+      });
+    }
+  }
+  dues.sort((a, b) =>
+    a.weekStartDate < b.weekStartDate ? -1 : a.weekStartDate > b.weekStartDate ? 1 : a.projectId < b.projectId ? -1 : 1,
+  );
+  const payments = demoPayments
+    .filter((p) => p.personId === personId)
+    .map((p) => {
+      const project = projects.find((x) => x.id === p.projectId);
+      const wn = Number(p.weekKey.slice(p.weekKey.lastIndexOf(":") + 1));
+      return {
+        id: p.id,
+        personId: p.personId,
+        personName: person.name,
+        projectName: project?.name ?? "?",
+        weekNumber: Number.isInteger(wn) ? wn : 0,
+        amountHalalas: p.amountHalalas,
+        paidAt: p.paidAt,
+        notes: p.notes,
+      };
+    })
+    .sort((a, b) => (a.paidAt < b.paidAt ? 1 : -1));
+  const totalDue = dues.reduce((s, d) => s + d.dueHalalas, 0);
+  const totalPaid = dues.reduce((s, d) => s + d.paidHalalas, 0);
+  return { personId, personName: person.name, dues, payments, totalDue, totalPaid, totalRemaining: totalDue - totalPaid };
+}
+
+/**
+ * Pay a worker across open dues, oldest week first. Overpayment is
+ * rejected; weeks that become fully paid flip to SETTLED.
+ */
+export async function payWorker(
+  personId: string,
+  amountHalalas: number,
+  notes: string | undefined,
+  createdBy: string,
+): Promise<{ statement: WorkerStatement; applied: number; allocations: { weekId: string; projectName: string; amountHalalas: number }[] }> {
+  if (!Number.isInteger(amountHalalas) || amountHalalas <= 0) throw new Error("مبلغ الدفعة غير صالح");
+  const statement = await getWorkerStatement(personId);
+  if (amountHalalas > statement.totalRemaining) throw new Error("المبلغ يتجاوز إجمالي المتبقي");
+  const open = statement.dues.filter((d) => d.dueHalalas - d.paidHalalas > 0);
+  let left = amountHalalas;
+  const allocations: { weekId: string; projectName: string; amountHalalas: number }[] = [];
+  const touched = new Set<string>();
+  for (const due of open) {
+    if (left <= 0) break;
+    const take = Math.min(left, due.dueHalalas - due.paidHalalas);
+    demoPayments.push({
+      id: `pay${paymentSeq++}`,
+      weekKey: due.weekId,
+      projectId: due.projectId,
+      personId,
+      amountHalalas: take,
+      paidAt: new Date().toISOString(),
+      notes: notes?.trim() ? notes.trim() : null,
+      createdBy,
+    });
+    allocations.push({ weekId: due.weekId, projectName: due.projectName, amountHalalas: take });
+    touched.add(due.weekId);
+    left -= take;
+  }
+  for (const weekId of touched) {
+    const { projectId, weekNumber } = parseDemoWeekId(weekId);
+    const project = (await getProject(projectId)) as ProjectRow;
+    const fresh = buildDemoWeek(project, weekNumber) as WeekSummary;
+    const status: WeekStatus = fresh.dues.every((d) => d.paidHalalas >= d.dueHalalas) ? "SETTLED" : "OPEN";
+    demoWeekStatus.set(weekId, status);
+  }
+  demoAudit.push({ entityType: "Person", entityId: personId, action: "PAY", performedBy: createdBy });
+  return { statement: await getWorkerStatement(personId), applied: allocations.length, allocations };
 }
 
 export function isDemoMode(): boolean {

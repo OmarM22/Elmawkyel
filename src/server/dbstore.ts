@@ -11,7 +11,10 @@
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import type {
+  AttendanceConflict,
   AttendanceRow,
+  DayCloseInfo,
+  OpenAssignment,
   PersonRow,
   PersonType,
   ProjectRow,
@@ -19,6 +22,7 @@ import type {
   TeamMember,
   UserRow,
   WeekSummary,
+  WorkerStatement,
 } from "@/types";
 import { weekBounds } from "./weekcalc";
 import type { AttendanceInput, StoredUser } from "./demo";
@@ -124,7 +128,7 @@ export async function setUserActive(id: string, active: boolean): Promise<boolea
 
 export async function updateUser(
   id: string,
-  patch: { name?: string; role?: "ADMIN" | "MANAGER" | "VIEWER"; active?: boolean; passwordHash?: string },
+  patch: { name?: string; role?: "ADMIN"; active?: boolean; passwordHash?: string },
 ): Promise<UserRow | null> {
   try {
     const u = await prisma.user.update({
@@ -155,7 +159,7 @@ export async function createUser(args: {
   email: string;
   name: string;
   passwordHash: string;
-  role: "ADMIN" | "MANAGER" | "VIEWER";
+  role: "ADMIN";
 }): Promise<UserRow> {
   try {
     const u = await prisma.user.create({
@@ -305,23 +309,45 @@ export async function recordAttendanceBatch(args: {
   date: string;
   records: AttendanceInput[];
   createdBy: string;
-}): Promise<{ recorded: number; updated: number }> {
+}): Promise<{ recorded: number; updated: number; skipped: AttendanceConflict[] }> {
   const project = await prisma.project.findUnique({
     where: { id: args.projectId },
     select: { id: true, startDate: true },
   });
   if (!project) throw new Error("المشروع غير موجود");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error("التاريخ غير صالح");
+  const day = toDate(args.date);
+  const closed = await prisma.attendanceDayClose.findUnique({
+    where: { projectId_date: { projectId: args.projectId, date: day } },
+    select: { id: true },
+  });
+  if (closed) throw new Error("اليوم مغلق — لا يمكن التسجيل أو التعديل");
 
   const week = await weekIdFor(args.projectId, toDateStr(project.startDate), args.date);
   if (week.status === "SETTLED") throw new Error("لا يمكن التسجيل — الأسبوع مسوّى");
   const weekId = week.id;
   let recorded = 0;
   let updated = 0;
+  const skipped: AttendanceConflict[] = [];
   for (const r of args.records) {
     const person = await getPerson(r.personId);
     if (!person || !person.active) continue;
-    const day = toDate(args.date);
+    if (r.status === "PRESENT") {
+      const clash = await prisma.dailyAttendance.findFirst({
+        where: { personId: r.personId, date: day, status: "PRESENT", projectId: { not: args.projectId } },
+        include: { project: { select: { name: true } } },
+      });
+      if (clash) {
+        skipped.push({
+          personId: person.id,
+          personName: person.name,
+          date: args.date,
+          existingProjectId: clash.projectId,
+          existingProjectName: clash.project.name,
+        });
+        continue;
+      }
+    }
     const existing = await prisma.dailyAttendance.findUnique({
       where: {
         personId_projectId_date: { personId: r.personId, projectId: args.projectId, date: day },
@@ -359,7 +385,7 @@ export async function recordAttendanceBatch(args: {
       recorded += 1;
     }
   }
-  return { recorded, updated };
+  return { recorded, updated, skipped };
 }
 
 /** Person detail with per-project aggregation derived from attendance. */
@@ -510,15 +536,15 @@ function toWeekSummary(
     startDate: Date;
     endDate: Date;
     status: "OPEN" | "CLOSED" | "SETTLED";
-    attendances: { personId: string; person: { name: string }; dailyRate: unknown; hours: unknown }[];
+    attendances: { personId: string; person: { name: string; type: "CRAFTSMAN" | "WORKER" }; dailyRate: unknown; hours: unknown }[];
     payments: { id: string; personId: string; person: { name: string }; amount: unknown; paidAt: Date; notes: string | null }[];
   },
 ): WeekSummary {
-  const byPerson = new Map<string, { name: string; days: number; due: number }>();
+  const byPerson = new Map<string, { name: string; type: "CRAFTSMAN" | "WORKER"; days: number; due: number }>();
   for (const a of week.attendances) {
     const rate = (a.dailyRate as { toNumber: () => number }).toNumber();
     const hours = (a.hours as { toNumber: () => number }).toNumber();
-    const e = byPerson.get(a.personId) ?? { name: a.person.name, days: 0, due: 0 };
+    const e = byPerson.get(a.personId) ?? { name: a.person.name, type: a.person.type, days: 0, due: 0 };
     e.days += 1;
     e.due += Math.round(rate * 100) * hours;
     byPerson.set(a.personId, e);
@@ -539,6 +565,7 @@ function toWeekSummary(
   const dues = [...byPerson.entries()].map(([personId, v]) => ({
     personId,
     personName: v.name,
+    type: v.type,
     days: v.days,
     dueHalalas: v.due,
     paidHalalas: paidByPerson.get(personId) ?? 0,
@@ -571,7 +598,7 @@ export async function listWeeks(projectId: string): Promise<WeekSummary[]> {
     include: {
       attendances: {
         where: { status: "PRESENT" },
-        include: { person: { select: { name: true } } },
+        include: { person: { select: { name: true, type: true } } },
       },
       payments: { include: { person: { select: { name: true } } } },
     },
@@ -594,7 +621,7 @@ export async function recordWeekPayments(
       project: { select: { name: true } },
       attendances: {
         where: { status: "PRESENT" },
-        include: { person: { select: { name: true } } },
+        include: { person: { select: { name: true, type: true } } },
       },
       payments: { include: { person: { select: { name: true } } } },
     },
@@ -656,7 +683,7 @@ export async function recordWeekPayments(
     include: {
       attendances: {
         where: { status: "PRESENT" },
-        include: { person: { select: { name: true } } },
+        include: { person: { select: { name: true, type: true } } },
       },
       payments: { include: { person: { select: { name: true } } } },
     },
@@ -706,7 +733,7 @@ export async function voidWeekPayment(
     include: {
       attendances: {
         where: { status: "PRESENT" },
-        include: { person: { select: { name: true } } },
+        include: { person: { select: { name: true, type: true } } },
       },
       payments: { include: { person: { select: { name: true } } } },
     },
@@ -779,6 +806,27 @@ export async function unassignPersonFromProject(
   return { personId, projectId };
 }
 
+/** Every open assignment with denormalized names (quick-mark feed). */
+export async function listOpenAssignments(): Promise<OpenAssignment[]> {
+  const rows = await prisma.projectAssignment.findMany({
+    where: { endDate: null },
+    include: {
+      person: { select: { id: true, name: true, active: true } },
+      project: { select: { id: true, name: true, status: true, workingDays: true } },
+    },
+    orderBy: { person: { name: "asc" } },
+  });
+  return rows.map((a) => ({
+    personId: a.person.id,
+    personName: a.person.name,
+    personActive: a.person.active,
+    projectId: a.project.id,
+    projectName: a.project.name,
+    projectStatus: a.project.status,
+    workingDays: [...a.project.workingDays],
+  }));
+}
+
 export async function getProjectTeam(projectId: string): Promise<TeamMember[]> {
   const rows = await prisma.projectAssignment.findMany({
     where: { projectId, endDate: null },
@@ -814,6 +862,402 @@ export async function deletePerson(id: string): Promise<true> {
     prisma.person.delete({ where: { id } }),
   ]);
   return true;
+}
+
+/**
+ * Hard-delete a project. Without `force`, blocked (restrict) by attendance,
+ * payments, or a closed day. `force` (ADMIN-only, enforced at the API) wipes
+ * the project's payment and attendance rows first — permanent. FK order:
+ * payment → attendance → dayClose → assignment → week → project.
+ */
+export async function deleteProject(id: string, opts: { force?: boolean } = {}): Promise<true> {
+  const [attendance, payments, closes, project] = await Promise.all([
+    prisma.dailyAttendance.count({ where: { projectId: id } }),
+    prisma.payment.count({ where: { projectId: id } }),
+    prisma.attendanceDayClose.count({ where: { projectId: id } }),
+    prisma.project.findUnique({ where: { id }, select: { id: true } }),
+  ]);
+  if (!project) throw new Error("المشروع غير موجود");
+  if (attendance + payments + closes > 0 && !opts.force) {
+    throw new Error("لا يمكن حذف هذا المشروع — توجد سجلات حضور أو مدفوعات مرتبطة به. ألغِه بدلاً من ذلك.");
+  }
+  await prisma.$transaction([
+    prisma.payment.deleteMany({ where: { projectId: id } }),
+    prisma.dailyAttendance.deleteMany({ where: { projectId: id } }),
+    prisma.attendanceDayClose.deleteMany({ where: { projectId: id } }),
+    prisma.projectAssignment.deleteMany({ where: { projectId: id } }),
+    prisma.week.deleteMany({ where: { projectId: id } }),
+    prisma.project.delete({ where: { id } }),
+  ]);
+  return true;
+}
+
+// ─── Attendance day close ────────────────────────────────────────────────────
+
+const JS_DAY_TO_NAME = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+
+export async function getDayClose(projectId: string, date: string): Promise<DayCloseInfo | null> {
+  const c = await prisma.attendanceDayClose.findUnique({
+    where: { projectId_date: { projectId, date: toDate(date) } },
+  });
+  if (!c) return null;
+  return { projectId, date, closedBy: c.closedBy, closedAt: c.closedAt.toISOString() };
+}
+
+export async function isAttendanceDayClosed(projectId: string, date: string): Promise<boolean> {
+  const c = await prisma.attendanceDayClose.findUnique({
+    where: { projectId_date: { projectId, date: toDate(date) } },
+    select: { id: true },
+  });
+  return c !== null;
+}
+
+export async function closeAttendanceDay(
+  projectId: string,
+  date: string,
+  closedBy: string,
+): Promise<{ closed: true }> {
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) throw new Error("المشروع غير موجود");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("التاريخ غير صالح");
+  const dayName = JS_DAY_TO_NAME[new Date(`${date}T00:00:00.000Z`).getUTCDay()];
+  if (!project.workingDays.includes(dayName as (typeof project.workingDays)[number])) {
+    throw new Error("لا يمكن الإغلاق — هذا اليوم ليس من أيام عمل المشروع");
+  }
+  const day = toDate(date);
+  const already = await prisma.attendanceDayClose.findUnique({
+    where: { projectId_date: { projectId, date: day } },
+    select: { id: true },
+  });
+  if (already) throw new Error("اليوم مغلق بالفعل");
+  const bounds = weekBounds(toDateStr(project.startDate), date);
+  const week = await prisma.week.findUnique({
+    where: { projectId_weekNumber: { projectId, weekNumber: bounds.weekNumber } },
+    select: { status: true },
+  });
+  if (week?.status === "SETTLED") throw new Error("لا يمكن الإغلاق — الأسبوع مسوّى");
+
+  await prisma.attendanceDayClose.create({ data: { projectId, date: day, closedBy } });
+  return { closed: true };
+}
+
+export async function reopenAttendanceDay(
+  projectId: string,
+  date: string,
+): Promise<{ reopened: true }> {
+  const existing = await prisma.attendanceDayClose.findUnique({
+    where: { projectId_date: { projectId, date: toDate(date) } },
+    select: { id: true },
+  });
+  if (!existing) throw new Error("اليوم غير مغلق");
+  await prisma.attendanceDayClose.delete({ where: { id: existing.id } });
+  return { reopened: true };
+}
+
+export async function moveAttendance(args: {
+  personId: string;
+  date: string;
+  toProjectId: string;
+}): Promise<{ moved: AttendanceRow }> {
+  const person = await getPerson(args.personId);
+  if (!person) throw new Error("الشخص غير موجود");
+  const toProject = await prisma.project.findUnique({ where: { id: args.toProjectId } });
+  if (!toProject) throw new Error("المشروع غير موجود");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error("التاريخ غير صالح");
+  const day = toDate(args.date);
+  const source = await prisma.dailyAttendance.findFirst({
+    where: { personId: args.personId, date: day, status: "PRESENT", projectId: { not: args.toProjectId } },
+  });
+  if (!source) throw new Error("لا يوجد حضور حاضر لنقله في هذا اليوم");
+  const srcClosed = await prisma.attendanceDayClose.findUnique({
+    where: { projectId_date: { projectId: source.projectId, date: day } },
+    select: { id: true },
+  });
+  if (srcClosed) throw new Error("لا يمكن النقل — اليوم مغلق في المشروع الأصلي");
+  const dstClosed = await prisma.attendanceDayClose.findUnique({
+    where: { projectId_date: { projectId: args.toProjectId, date: day } },
+    select: { id: true },
+  });
+  if (dstClosed) throw new Error("لا يمكن النقل — اليوم مغلق في المشروع الجديد");
+  const srcProject = await prisma.project.findUnique({
+    where: { id: source.projectId },
+    select: { startDate: true },
+  });
+  const srcBounds = weekBounds(toDateStr(srcProject?.startDate ?? day), args.date);
+  const srcWeek = await prisma.week.findUnique({
+    where: { projectId_weekNumber: { projectId: source.projectId, weekNumber: srcBounds.weekNumber } },
+    select: { status: true },
+  });
+  if (srcWeek?.status === "SETTLED") throw new Error("لا يمكن النقل — الأسبوع مسوّى في المشروع الأصلي");
+  const dstBounds = weekBounds(toDateStr(toProject.startDate), args.date);
+  const dstWeek = await prisma.week.findUnique({
+    where: { projectId_weekNumber: { projectId: args.toProjectId, weekNumber: dstBounds.weekNumber } },
+    select: { status: true },
+  });
+  if (dstWeek?.status === "SETTLED") throw new Error("لا يمكن النقل — الأسبوع مسوّى في المشروع الجديد");
+  const clash = await prisma.dailyAttendance.findFirst({
+    where: { personId: args.personId, date: day, status: "PRESENT", projectId: args.toProjectId },
+    select: { id: true },
+  });
+  if (clash) throw new Error("يوجد حضور مسجل بالفعل في المشروع الجديد");
+  const assignmentId = await assignmentIdFor(person.id, args.toProjectId, args.date, person.currentDailyRate);
+  const dstWeekId = (
+    await prisma.week.upsert({
+      where: { projectId_weekNumber: { projectId: args.toProjectId, weekNumber: dstBounds.weekNumber } },
+      update: {},
+      create: {
+        projectId: args.toProjectId,
+        weekNumber: dstBounds.weekNumber,
+        startDate: toDate(dstBounds.start),
+        endDate: toDate(dstBounds.end),
+      },
+      select: { id: true },
+    })
+  ).id;
+
+  const moved = await prisma.$transaction(async (tx) => {
+    await tx.dailyAttendance.delete({ where: { id: source.id } });
+    return tx.dailyAttendance.create({
+      data: {
+        personId: person.id,
+        projectId: args.toProjectId,
+        assignmentId,
+        weekId: dstWeekId,
+        date: day,
+        status: "PRESENT",
+        dailyRate: source.dailyRate.toNumber(),
+        hours: source.hours.toNumber(),
+        notes: source.notes,
+        createdBy: source.createdBy,
+      },
+    });
+  });
+  return {
+    moved: {
+      id: moved.id,
+      personId: moved.personId,
+      personName: person.name,
+      projectId: moved.projectId,
+      projectName: toProject.name,
+      date: args.date,
+      status: moved.status,
+      dailyRate: moved.dailyRate.toNumber(),
+      hours: moved.hours.toNumber(),
+      notes: moved.notes,
+    },
+  };
+}
+
+export async function quickMark(
+  personId: string,
+  date: string,
+  status: "PRESENT",
+  createdBy: string,
+): Promise<{
+  success: true;
+  projects: { projectId: string; projectName: string }[];
+  skipped: AttendanceConflict[];
+}> {
+  const person = await getPerson(personId);
+  if (!person) throw new Error("الشخص غير موجود");
+  if (!person.active) throw new Error("الشخص غير نشط");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("التاريخ غير صالح");
+  const day = toDate(date);
+  const dayName = JS_DAY_TO_NAME[new Date(`${date}T00:00:00.000Z`).getUTCDay()];
+  const rows = await prisma.projectAssignment.findMany({
+    where: { personId, endDate: null, startDate: { lte: day } },
+    include: { project: true },
+  });
+  const eligible = rows.filter(
+    (a) => a.project.status === "ACTIVE" && (a.project.workingDays as string[]).includes(dayName),
+  );
+  const existing = await prisma.dailyAttendance.findFirst({
+    where: { personId, date: day, status: "PRESENT" },
+    include: { project: { select: { name: true } } },
+  });
+  if (existing) {
+    return {
+      success: true,
+      projects: [],
+      skipped: [
+        {
+          personId,
+          personName: person.name,
+          date,
+          existingProjectId: existing.projectId,
+          existingProjectName: existing.project.name,
+        },
+      ],
+    };
+  }
+  const ops = [];
+  const projects: { projectId: string; projectName: string }[] = [];
+  for (const a of eligible) {
+    const bounds = weekBounds(toDateStr(a.project.startDate), date);
+    const weekId = (
+      await prisma.week.upsert({
+        where: { projectId_weekNumber: { projectId: a.projectId, weekNumber: bounds.weekNumber } },
+        update: {},
+        create: {
+          projectId: a.projectId,
+          weekNumber: bounds.weekNumber,
+          startDate: toDate(bounds.start),
+          endDate: toDate(bounds.end),
+        },
+        select: { id: true },
+      })
+    ).id;
+    ops.push(
+      prisma.dailyAttendance.upsert({
+        where: { personId_projectId_date: { personId, projectId: a.projectId, date: day } },
+        update: { status: "PRESENT", dailyRate: person.currentDailyRate, hours: 1 },
+        create: {
+          personId,
+          projectId: a.projectId,
+          assignmentId: a.id,
+          weekId,
+          date: day,
+          status: "PRESENT",
+          dailyRate: person.currentDailyRate,
+          hours: 1,
+          notes: null,
+          createdBy,
+        },
+      }),
+    );
+    projects.push({ projectId: a.projectId, projectName: a.project.name });
+  }
+  await prisma.$transaction(ops);
+  return { success: true, projects, skipped: [] };
+}
+
+export async function getWorkerStatement(personId: string): Promise<WorkerStatement> {
+  const person = await prisma.person.findUnique({
+    where: { id: personId },
+    select: { id: true, name: true },
+  });
+  if (!person) throw new Error("الشخص غير موجود");
+  const weeks = await prisma.week.findMany({
+    include: {
+      project: { select: { id: true, name: true } },
+      attendances: {
+        where: { status: "PRESENT", personId },
+        include: { person: { select: { name: true } } },
+      },
+      payments: { where: { personId }, include: { person: { select: { name: true } } } },
+    },
+  });
+  const dues: WorkerStatement["dues"] = [];
+  for (const w of weeks) {
+    const due = w.attendances.reduce(
+      (s, a) => s + Math.round(a.dailyRate.toNumber() * 100) * a.hours.toNumber(),
+      0,
+    );
+    if (due <= 0) continue;
+    const paid = w.payments.reduce((s, p) => s + (p.amount as { toNumber: () => number }).toNumber(), 0);
+    dues.push({
+      projectId: w.project.id,
+      projectName: w.project.name,
+      weekId: w.id,
+      weekNumber: w.weekNumber,
+      weekStartDate: toDateStr(w.startDate),
+      dueHalalas: due,
+      paidHalalas: paid,
+    });
+  }
+  dues.sort((a, b) =>
+    a.weekStartDate < b.weekStartDate ? -1 : a.weekStartDate > b.weekStartDate ? 1 : a.projectId < b.projectId ? -1 : 1,
+  );
+  const payments = (
+    await prisma.payment.findMany({
+      where: { personId },
+      include: { project: { select: { name: true } }, week: { select: { weekNumber: true } } },
+      orderBy: { paidAt: "desc" },
+    })
+  ).map((p) => ({
+    id: p.id,
+    personId,
+    personName: person.name,
+    projectName: p.project.name,
+    weekNumber: p.week.weekNumber,
+    amountHalalas: (p.amount as { toNumber: () => number }).toNumber(),
+    paidAt: p.paidAt.toISOString(),
+    notes: p.notes,
+  }));
+  const totalDue = dues.reduce((s, d) => s + d.dueHalalas, 0);
+  const totalPaid = dues.reduce((s, d) => s + d.paidHalalas, 0);
+  return { personId, personName: person.name, dues, payments, totalDue, totalPaid, totalRemaining: totalDue - totalPaid };
+}
+
+export async function payWorker(
+  personId: string,
+  amountHalalas: number,
+  notes: string | undefined,
+  createdBy: string,
+): Promise<{
+  statement: WorkerStatement;
+  applied: number;
+  allocations: { weekId: string; projectName: string; amountHalalas: number }[];
+}> {
+  if (!Number.isInteger(amountHalalas) || amountHalalas <= 0) throw new Error("مبلغ الدفعة غير صالح");
+  const statement = await getWorkerStatement(personId);
+  if (amountHalalas > statement.totalRemaining) throw new Error("المبلغ يتجاوز إجمالي المتبقي");
+  const open = statement.dues.filter((d) => d.dueHalalas - d.paidHalalas > 0);
+  const cleanNotes = notes?.trim() ? notes.trim() : null;
+  let left = amountHalalas;
+  const allocations: { weekId: string; projectName: string; amountHalalas: number }[] = [];
+  const ops = [];
+  const touched = new Set<string>();
+  for (const due of open) {
+    if (left <= 0) break;
+    const take = Math.min(left, due.dueHalalas - due.paidHalalas);
+    ops.push(
+      prisma.payment.create({
+        data: {
+          personId,
+          projectId: due.projectId,
+          weekId: due.weekId,
+          amount: take,
+          notes: cleanNotes,
+          createdBy,
+        },
+      }),
+    );
+    allocations.push({ weekId: due.weekId, projectName: due.projectName, amountHalalas: take });
+    touched.add(due.weekId);
+    left -= take;
+  }
+  ops.push(
+    prisma.auditLog.create({
+      data: {
+        entityType: "Person",
+        entityId: personId,
+        action: "PAY",
+        newValues: { amountHalalas, allocations, createdBy },
+        performedBy: createdBy,
+      },
+    }),
+  );
+  await prisma.$transaction(ops);
+  for (const weekId of touched) {
+    const w = await prisma.week.findUnique({
+      where: { id: weekId },
+      include: {
+        attendances: { where: { status: "PRESENT" } },
+        payments: true,
+      },
+    });
+    if (!w) continue;
+    const due = w.attendances.reduce(
+      (s, a) => s + Math.round(a.dailyRate.toNumber() * 100) * a.hours.toNumber(),
+      0,
+    );
+    const paid = w.payments.reduce((s, p) => s + (p.amount as { toNumber: () => number }).toNumber(), 0);
+    if (w.status === "OPEN" && paid >= due && due > 0) {
+      await prisma.week.update({ where: { id: weekId }, data: { status: "SETTLED" } });
+    }
+  }
+  return { statement: await getWorkerStatement(personId), applied: allocations.length, allocations };
 }
 
 export function isDemoMode(): boolean {

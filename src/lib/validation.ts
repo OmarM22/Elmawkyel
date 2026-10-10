@@ -6,6 +6,11 @@ import { z } from "zod";
 
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "التاريخ غير صالح (YYYY-MM-DD)");
 
+// Open-ended field: a valid date, "" (empty <input type="date">), null
+// (cleared) or absent all mean "no end date". No transform on purpose —
+// RHF input and API output stay the same type.
+const optionalDateStr = z.union([dateStr, z.literal(""), z.null()]).optional();
+
 const personBase = z.object({
   name: z.string().trim().min(2, "أدخل الاسم (حرفان على الأقل)").max(100),
   type: z.enum(["CRAFTSMAN", "WORKER"]),
@@ -26,7 +31,7 @@ export type PersonPatchInput = z.infer<typeof personPatchSchema>;
 
 export const userPatchSchema = z.object({
   name: z.string().trim().min(2, "أدخل الاسم").max(100).optional(),
-  role: z.enum(["ADMIN", "MANAGER", "VIEWER"]).optional(),
+  role: z.enum(["ADMIN"]).optional(),
   active: z.boolean().optional(),
   password: z.string().min(8, "كلمة المرور ٨ أحرف على الأقل").optional(),
 });
@@ -51,7 +56,7 @@ function datesMakeSense(v: { startDate?: string; endDate?: string | null }): boo
 const projectBase = z.object({
   name: z.string().trim().min(2, "أدخل اسم المشروع").max(150),
   startDate: dateStr,
-  endDate: dateStr.nullish(),
+  endDate: optionalDateStr,
   status: z.enum(["ACTIVE", "COMPLETED", "ON_HOLD", "CANCELLED"]),
   workingDays: z.array(dayOfWeek).min(1, "اختر يوماً واحداً على الأقل"),
 });
@@ -68,7 +73,7 @@ export const projectPatchSchema = projectBase.partial().refine(datesMakeSense, {
 export type ProjectCreateInput = z.infer<typeof projectCreateSchema>;
 export type ProjectPatchInput = z.infer<typeof projectPatchSchema>;
 
-/** ADMIN + MANAGER can manage people, projects, and attendance. */
+/** Only ADMIN can manage people, projects, and attendance. */
 export function canManage(role: string | undefined): boolean {
-  return role === "ADMIN" || role === "MANAGER";
+  return role === "ADMIN";
 }

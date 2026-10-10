@@ -25,6 +25,10 @@ export async function proxy(req: NextRequest) {
 
   if (!token) {
     if (pathname === "/login") return NextResponse.next();
+    // API consumers must get a clean 401 (they cannot consume an HTML page).
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+    }
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("callbackUrl", req.nextUrl.pathname);

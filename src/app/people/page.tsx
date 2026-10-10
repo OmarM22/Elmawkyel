@@ -36,7 +36,7 @@ const columnHelper = legacyCreateColumnHelper<PersonRow>();
 export default function PeoplePage() {
   const { data: session } = useSession();
   const { data, isLoading, isError } = useQuery({ queryKey: ["people"], queryFn: fetchPeople });
-  const canManage = session?.user?.role === "ADMIN" || session?.user?.role === "MANAGER";
+  const canManage = session?.user?.role === "ADMIN";
 
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");

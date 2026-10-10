@@ -43,14 +43,12 @@ export default function WeeklyPage() {
   const allRows = useMemo(() => data?.attendance ?? [], [data]);
 
   const byDay = useMemo(() => {
-    const map = new Map<string, { count: number; absent: number; leave: number; halalas: number }>();
+    const map = new Map<string, { count: number; leave: number; halalas: number }>();
     for (const r of allRows) {
-      const e = map.get(r.date) ?? { count: 0, absent: 0, leave: 0, halalas: 0 };
+      const e = map.get(r.date) ?? { count: 0, leave: 0, halalas: 0 };
       if (r.status === "PRESENT") {
         e.count += 1;
         e.halalas += Math.round(r.dailyRate * 100) * r.hours;
-      } else if (r.status === "ABSENT") {
-        e.absent += 1;
       } else {
         e.leave += 1;
       }
@@ -60,14 +58,12 @@ export default function WeeklyPage() {
   }, [allRows]);
 
   const byPerson = useMemo(() => {
-    const map = new Map<string, { personId: string; name: string; days: number; absent: number; leave: number; halalas: number }>();
+    const map = new Map<string, { personId: string; name: string; days: number; leave: number; halalas: number }>();
     for (const r of allRows) {
-      const e = map.get(r.personId) ?? { personId: r.personId, name: r.personName, days: 0, absent: 0, leave: 0, halalas: 0 };
+      const e = map.get(r.personId) ?? { personId: r.personId, name: r.personName, days: 0, leave: 0, halalas: 0 };
       if (r.status === "PRESENT") {
         e.days += 1;
         e.halalas += Math.round(r.dailyRate * 100) * r.hours;
-      } else if (r.status === "ABSENT") {
-        e.absent += 1;
       } else {
         e.leave += 1;
       }
@@ -76,7 +72,6 @@ export default function WeeklyPage() {
     return [...map.values()];
   }, [allRows]);
 
-  const totalAbsent = byDay.reduce((s, [, v]) => s + v.absent, 0);
   const totalLeave = byDay.reduce((s, [, v]) => s + v.leave, 0);
 
   const total = sumHalalas(byDay.map(([, v]) => v.halalas));
@@ -144,7 +139,7 @@ export default function WeeklyPage() {
                 <CardContent>
                   <div className="text-lg font-bold">{rows.length}</div>
                   <p className="text-xs text-muted-foreground">
-                    غياب: {totalAbsent} • إجازة: {totalLeave}
+                    إجازة: {totalLeave}
                   </p>
                 </CardContent>
               </Card>
@@ -173,7 +168,6 @@ export default function WeeklyPage() {
                           <th className="py-2 text-right font-medium">التاريخ</th>
                           <th className="py-2 text-right font-medium">اليوم</th>
                           <th className="py-2 text-right font-medium">الحضور</th>
-                          <th className="py-2 text-right font-medium">الغياب</th>
                           <th className="py-2 text-right font-medium">الإجازات</th>
                           <th className="py-2 text-right font-medium">التكلفة</th>
                         </tr>
@@ -186,7 +180,6 @@ export default function WeeklyPage() {
                             </td>
                             <td className="py-2">{AR_DAYS[new Date(`${date}T00:00:00`).getDay()]}</td>
                             <td className="py-2">{v.count}</td>
-                            <td className="py-2">{v.absent}</td>
                             <td className="py-2">{v.leave}</td>
                             <td className="py-2 font-semibold">{formatSAR(v.halalas)}</td>
                           </tr>
@@ -212,7 +205,6 @@ export default function WeeklyPage() {
                         <tr className="border-b text-muted-foreground">
                           <th className="py-2 text-right font-medium">الاسم</th>
                           <th className="py-2 text-right font-medium">الأيام</th>
-                          <th className="py-2 text-right font-medium">الغياب</th>
                           <th className="py-2 text-right font-medium">الإجازات</th>
                           <th className="py-2 text-right font-medium">المستحق</th>
                         </tr>
@@ -226,7 +218,6 @@ export default function WeeklyPage() {
                               </Link>
                             </td>
                             <td className="py-2">{p.days}</td>
-                            <td className="py-2">{p.absent}</td>
                             <td className="py-2">{p.leave}</td>
                             <td className="py-2 font-semibold">{formatSAR(p.halalas)}</td>
                           </tr>

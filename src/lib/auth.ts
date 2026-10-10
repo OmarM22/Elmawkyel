@@ -7,6 +7,7 @@ import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
 import { findUserByLogin, upgradePasswordHash } from "@/server/store";
 import { hashPassword, verifyPassword } from "./password";
+import type { Role } from "@/types";
 
 const loginSchema = z.object({
   login: z.string().trim().min(1, "أدخل اسم المستخدم أو البريد الإلكتروني"),
@@ -61,7 +62,7 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         session.user.id = (token.id as string) ?? "";
         session.user.username = (token.username as string) ?? "";
-        session.user.role = (token.role as "ADMIN" | "MANAGER" | "VIEWER") ?? "VIEWER";
+        session.user.role = (token.role as Role) ?? "ADMIN";
       }
       return session;
     },

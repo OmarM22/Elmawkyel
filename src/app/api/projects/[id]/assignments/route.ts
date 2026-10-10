@@ -7,7 +7,7 @@ import { canManage } from "@/lib/validation";
 
 const bodySchema = z.object({ personId: z.string().min(1, "اختر الشخص") });
 
-/** Assign a person to the project (idempotent). ADMIN/MANAGER only. */
+/** Assign a person to the project (idempotent). ADMIN only. */
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -41,7 +41,7 @@ export async function POST(
   }
 }
 
-/** End a person's assignment (history-preserving). ADMIN/MANAGER only. */
+/** End a person's assignment (history-preserving). ADMIN only. */
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> },

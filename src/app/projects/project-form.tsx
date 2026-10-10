@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+// HTMLFormElement is a standard DOM type, available globally in React 19
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -38,7 +39,7 @@ export function ProjectForm({ initial, onDone }: ProjectFormProps) {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<ProjectCreateInput>({
+  } = useForm<ProjectCreateInput, HTMLFormElement, ProjectCreateInput>({
     resolver: zodResolver(projectCreateSchema),
     defaultValues: {
       name: initial?.name ?? "",
@@ -79,7 +80,11 @@ export function ProjectForm({ initial, onDone }: ProjectFormProps) {
 
   async function onSubmit(values: ProjectCreateInput) {
     setServerError(null);
-    const payload = { ...values, endDate: values.endDate?.trim() ? values.endDate : undefined };
+    // Blank end date means open-ended: send null so editing can clear it.
+    const payload = {
+      ...values,
+      endDate: values.endDate?.trim() ? values.endDate : null,
+    };
     const url = editing ? `/api/projects/${initial!.id}` : "/api/projects";
     const res = await fetch(url, {
       method: editing ? "PATCH" : "POST",

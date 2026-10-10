@@ -6,7 +6,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
 import { Building2, CalendarDays, ClipboardCheck, Minus, RefreshCw, TrendingDown, TrendingUp, TriangleAlert, Users, Wallet } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatSAR } from "@/lib/money";
@@ -60,12 +59,10 @@ export default function DashboardPage() {
     queryKey: ["dashboard"],
     queryFn: fetchDashboard,
   });
-  const canRecord = session?.user?.role === "ADMIN" || session?.user?.role === "MANAGER";
+  const canRecord = session?.user?.role === "ADMIN";
 
-  const rate =
-    data && data.today.present + data.today.absent > 0
-      ? Math.round((data.today.present / (data.today.present + data.today.absent)) * 100)
-      : null;
+  const totalCost = data?.perProject.reduce((s, p) => s + p.halalas, 0) ?? 0;
+  const totalDays = data?.perProject.reduce((s, p) => s + p.days, 0) ?? 0;
 
   return (
     <AppShell>
@@ -80,7 +77,7 @@ export default function DashboardPage() {
               <Button asChild>
                 <Link href="/attendance">
                   <ClipboardCheck className="size-4" />
-                  تسجيل اليومية
+                  تسجيل الحضور
                 </Link>
               </Button>
             )}
@@ -175,7 +172,7 @@ export default function DashboardPage() {
                   <CardContent>
                     <div className="text-3xl font-bold">{data.weekAttendance}</div>
                     <p className="text-xs text-muted-foreground">
-                      {data.weekLabel} • غياب: {data.weekAbsent} • إجازة: {data.weekLeave}
+                      {data.weekLabel} • إجازة: {data.weekLeave}
                     </p>
                     <DeltaLine value={data.weekAttendanceDelta} format={String} judge />
                   </CardContent>
@@ -201,56 +198,25 @@ export default function DashboardPage() {
             </div>
 
             <Card>
-              <CardHeader>
-                <CardTitle>اليوم ({data.today.date})</CardTitle>
+              <CardHeader className="flex-row items-center justify-between">
+                <CardTitle>إجمالي تكلفة المشاريع (كل الفترات)</CardTitle>
+                <Wallet className="size-4 text-muted-foreground" />
               </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-                  <span>
-                    حاضر: <strong>{data.today.present}</strong>
-                  </span>
-                  <span>
-                    غائب: <strong>{data.today.absent}</strong>
-                  </span>
-                  <span>
-                    إجازة: <strong>{data.today.leave}</strong>
-                  </span>
-                  <span>
-                    نسبة الحضور: <strong>{rate === null ? "—" : `${rate}٪`}</strong>
-                  </span>
-                </div>
-                {data.today.absentPeople.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="text-muted-foreground">الغائبون اليوم:</span>
-                    {data.today.absentPeople.map((p) => (
-                      <Badge key={p.id} variant="outline">
-                        {p.name}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-                {data.today.missingProjects.length > 0 ? (
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="text-muted-foreground">لم تُسجَّل اليوم:</span>
-                    {data.today.missingProjects.map((p) => (
-                      <Badge key={p.id} variant="outline">
-                        {p.name}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">تم تسجيل جميع المشاريع العاملة اليوم.</p>
-                )}
+              <CardContent className="flex flex-wrap items-baseline gap-x-8 gap-y-2">
+                <span className="text-4xl font-bold">{formatSAR(totalCost)}</span>
+                <span className="text-sm text-muted-foreground">
+                  {data.perProject.length} مشاريع • {totalDays} يوم حضور
+                </span>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle>تكلفة المشاريع ({data.weekLabel})</CardTitle>
+                <CardTitle>تكلفة المشاريع بالتفصيل (من أول يوم مسجل)</CardTitle>
               </CardHeader>
               <CardContent>
                 {data.perProject.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">لا توجد يوميات في هذه الفترة.</p>
+                  <p className="text-sm text-muted-foreground">لا توجد يوميات مسجلة بعد.</p>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -263,12 +229,17 @@ export default function DashboardPage() {
                       </thead>
                       <tbody>
                         {data.perProject.map((p) => (
-                          <tr key={p.projectId} className="border-b last:border-0">
+                          <tr key={p.projectId} className="border-b">
                             <td className="py-2">{p.projectName}</td>
                             <td className="py-2">{p.days}</td>
                             <td className="py-2 font-semibold">{formatSAR(p.halalas)}</td>
                           </tr>
                         ))}
+                        <tr className="border-t-2 border-foreground/80">
+                          <td className="py-2 font-bold">الإجمالي</td>
+                          <td className="py-2 font-bold">{totalDays}</td>
+                          <td className="py-2 text-lg font-bold">{formatSAR(totalCost)}</td>
+                        </tr>
                       </tbody>
                     </table>
                   </div>
@@ -288,23 +259,37 @@ export default function DashboardPage() {
                     data={data.daily.map((d) => ({ ...d, sar: d.halalas / 100 }))}
                     margin={{ top: 8, right: 8, bottom: 8, left: 8 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="var(--color-border)"
+                      opacity={0.5}
+                    />
                     <XAxis
                       dataKey="date"
                       tickFormatter={(v: string) => v.slice(5)}
-                      tick={{ fontSize: 12 }}
+                      tick={{ fontSize: 12, fill: "var(--color-muted-foreground)" }}
+                      stroke="var(--color-border)"
                       interval="preserveStartEnd"
                     />
                     <YAxis
                       tickFormatter={(v: number) => v.toLocaleString("en-US")}
-                      tick={{ fontSize: 12 }}
+                      tick={{ fontSize: 12, fill: "var(--color-muted-foreground)" }}
+                      stroke="var(--color-border)"
                       width={60}
                     />
                     <Tooltip
+                      contentStyle={{
+                        background: "var(--color-popover)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: "8px",
+                        color: "var(--color-foreground)",
+                        fontSize: 13,
+                      }}
+                      labelStyle={{ color: "var(--color-foreground)" }}
                       formatter={(value) => [`${Number(value).toLocaleString("en-US")} ر.س`, "التكلفة"]}
                       labelFormatter={(label) => `اليوم ${String(label)}`}
                     />
-                    <Bar dataKey="sar" fill="var(--chart-1, #2563eb)" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="sar" fill="var(--color-chart-1)" radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </div>
               </CardContent>

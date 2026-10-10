@@ -37,7 +37,7 @@ const attendance: AttendanceRow[] = [
   { id: "a1", personId: "p1", personName: "أحمد حسن", projectId: "pr1", projectName: project.name, date: "2026-10-01", status: "PRESENT", dailyRate: 200, hours: 1, notes: null },
   { id: "a2", personId: "p1", personName: "أحمد حسن", projectId: "pr1", projectName: project.name, date: "2026-10-02", status: "PRESENT", dailyRate: 200, hours: 1, notes: null },
   { id: "a3", personId: "p2", personName: "محمد علي", projectId: "pr1", projectName: project.name, date: "2026-10-01", status: "PRESENT", dailyRate: 150, hours: 1, notes: null },
-  { id: "a4", personId: "p2", personName: "محمد علي", projectId: "pr1", projectName: project.name, date: "2026-10-02", status: "ABSENT", dailyRate: 150, hours: 0, notes: null },
+  { id: "a4", personId: "p2", personName: "محمد علي", projectId: "pr1", projectName: project.name, date: "2026-10-02", status: "LEAVE", dailyRate: 150, hours: 0, notes: null },
 ];
 
 function renderPage() {
@@ -65,10 +65,10 @@ describe("ProjectDetailPage", () => {
     expect(screen.getByText("القوى العاملة (2)")).toBeTruthy();
   });
 
-  it("aggregates workforce days and cost, excluding absences", async () => {
+  it("aggregates workforce days and cost, excluding leave days", async () => {
     const { container } = renderPage();
     await waitFor(() => expect(screen.getByText("القوى العاملة (2)")).toBeTruthy());
-    // Ahmed: 2 days × 200 = 400.00; Mohamed: 1 day × 150 (absent day excluded)
+    // Ahmed: 2 days × 200 = 400.00; Mohamed: 1 day × 150 (leave day excluded)
     expect(screen.getByText("400.00 ر.س")).toBeTruthy();
     expect(screen.getByText("150.00 ر.س")).toBeTruthy();
     expect(screen.getByText("550.00 ر.س")).toBeTruthy(); // project total

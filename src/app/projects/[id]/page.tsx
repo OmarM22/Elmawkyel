@@ -42,6 +42,8 @@ export default function ProjectDetailPage() {
     queryFn: () => fetchProject(id),
   });
   const team = projectQuery.data?.team ?? [];
+  const craftsmenCount = team.filter((m) => m.type === "CRAFTSMAN").length;
+  const workersCount = team.filter((m) => m.type === "WORKER").length;
   const attendanceQuery = useQuery({
     queryKey: ["attendance", "project", id],
     queryFn: () => getJson<{ attendance: AttendanceRow[] }>(`/api/attendance?projectId=${id}`),
@@ -117,6 +119,18 @@ export default function ProjectDetailPage() {
                     <div className="text-muted-foreground">إجمالي التكلفة</div>
                     <div className="font-semibold">{formatSAR(totalHalalas)}</div>
                   </div>
+                  <div>
+                    <div className="text-muted-foreground">عدد الصنايعية</div>
+                    <div className="font-semibold">{craftsmenCount}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">عدد العمال</div>
+                    <div className="font-semibold">{workersCount}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">إجمالي العمالة</div>
+                    <div className="font-semibold">{team.length}</div>
+                  </div>
                 </div>
                 <div>
                   <div className="mb-1 text-muted-foreground">أيام العمل</div>
@@ -132,8 +146,13 @@ export default function ProjectDetailPage() {
             </Card>
 
             <Card>
-              <CardHeader>
-                <CardTitle>فريق العمل ({team.length})</CardTitle>
+              <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
+                <CardTitle className="text-base">الصنايعية والعمال المعينون</CardTitle>
+                <div className="flex gap-2">
+                  <Badge variant="secondary">الصنايعية: {craftsmenCount}</Badge>
+                  <Badge variant="secondary">العمال: {workersCount}</Badge>
+                  <Badge variant="outline">الإجمالي: {team.length}</Badge>
+                </div>
               </CardHeader>
               <CardContent>
                 {team.length === 0 ? (

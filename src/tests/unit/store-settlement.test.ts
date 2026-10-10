@@ -92,7 +92,7 @@ describe("settlement workflow", () => {
         projectId: pr.id,
         date: "2026-10-03",
         createdBy: "u1",
-        records: [{ personId: p1.id, status: "ABSENT" }],
+        records: [{ personId: p1.id, status: "LEAVE" }],
       }),
     ).rejects.toThrow("مسوّى");
   });

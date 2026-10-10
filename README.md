@@ -35,5 +35,5 @@ npm run dev            # http://localhost:3000
 - Money is integer halalas (`src/lib/money.ts`) — never float arithmetic.
 - Daily attendance is the single source of truth; all totals derive from it.
 - Attendance snapshots the daily rate at record time (history never rewrites).
-- Login-only: no public registration; roles `ADMIN | MANAGER | VIEWER` enforced server-side.
+- Login-only: no public registration; a single `ADMIN` role, enforced server-side.
 - See `AGENTS.md` for the full contributor guide.

@@ -44,7 +44,6 @@ const base = {
 
 const attendance: AttendanceRow[] = [
   { ...base, id: "a1", date: "2026-10-03", status: "PRESENT" },
-  { ...base, id: "a2", personId: "p2", personName: "محمد علي", date: "2026-10-03", status: "ABSENT", hours: 0 },
   { ...base, id: "a3", personId: "p2", personName: "محمد علي", date: "2026-10-04", status: "LEAVE", hours: 0 },
 ];
 
@@ -60,21 +59,19 @@ function renderPage() {
   return render(<WeeklyPage />, { wrapper });
 }
 
-describe("WeeklyPage absences", () => {
+describe("WeeklyPage leave", () => {
   afterEach(() => cleanup());
 
-  it("shows absent/leave counts in the summary, daily, and per-person tables", async () => {
+  it("shows leave counts in the summary, daily, and per-person tables", async () => {
     const { container } = renderPage();
     // Window 2026-09-28..2026-10-04 covers the fixture rows.
     fireEvent.change(screen.getByLabelText("بداية الفترة"), { target: { value: "2026-09-28" } });
     await waitFor(() => expect(screen.getByText("مشروع")).toBeTruthy());
     fireEvent.change(screen.getByLabelText("المشروع"), { target: { value: "pr1" } });
     await waitFor(() => expect(screen.getAllByText("200.00 ر.س").length).toBeGreaterThanOrEqual(2));
-    expect(screen.getByText("غياب: 1 • إجازة: 1")).toBeTruthy();
-    for (const header of ["الغياب", "الإجازات"]) {
-      expect(screen.getAllByText(header).length).toBeGreaterThanOrEqual(2); // daily + per-person tables
-    }
-    // Mohamed: 0 present days, 1 absent, 1 leave, zero dues
+    expect(screen.getByText("إجازة: 1")).toBeTruthy();
+    expect(screen.getAllByText("الإجازات").length).toBeGreaterThanOrEqual(2); // daily + per-person tables
+    // Mohamed: 0 present days, 1 leave, zero dues
     const tables = container.querySelectorAll("tbody");
     expect(tables[1].textContent).toContain("محمد علي");
     expect(screen.getAllByText("0.00 ر.س").length).toBeGreaterThanOrEqual(2);

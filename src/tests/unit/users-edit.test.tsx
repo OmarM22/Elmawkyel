@@ -25,7 +25,7 @@ vi.mock("next/navigation", () => ({
 
 const users: UserRow[] = [
   { id: "u1", username: "admin", email: "admin@x.local", name: "مدير", role: "ADMIN", active: true },
-  { id: "u2", username: "wer", email: "wer@x.local", name: "مشرف", role: "MANAGER", active: true },
+  { id: "u2", username: "wer", email: "wer@x.local", name: "مشرف", role: "ADMIN", active: true },
 ];
 
 function renderPage() {

@@ -38,8 +38,8 @@ Package scripts are `dev/build/start/lint/test` (no other helpers).
 
 - Login-only internal system. No `/signup`, `/register`, no registration UI/API. `src/app/login/page.tsx` only (RHF + Zod, `signIn("credentials")`, `useSearchParams` requires `<Suspense>`).
 - `/` redirects server-side: session → `/dashboard`, else `/login`.
-- Roles `ADMIN | MANAGER | VIEWER` (Prisma `Role` enum + `User` model). JWT carries `id/username/role` (see `src/types/next-auth.d.ts`).
-- **Enforce server-side**: proxy gates routes; API routes check `getServerSession(authOptions)` and return 401/403 (`/api/users/*` and attendance POST require ADMIN; VIEWER is read-only).
+- Roles: **ADMIN only** (Prisma `Role` enum has a single value; `MANAGER`/`VIEWER` removed via migration `20261010120000_roles_admin_only`). JWT carries `id/username/role` (see `src/types/next-auth.d.ts`).
+- **Enforce server-side**: proxy gates routes; API routes check `getServerSession(authOptions)` and return 401/403. User-management, attendance writes, people/projects/settlements mutations and all other management actions require ADMIN (`canManage()` in `src/lib/validation.ts` = `role === "ADMIN"`). There are no read-only or manager roles left.
 - Users table (demo) seeds the admin **only** from `INITIAL_ADMIN_EMAIL`/`INITIAL_ADMIN_PASSWORD`. Never commit real credentials. Demo store upgrades the env password to scrypt on first login.
 - `NEXTAUTH_SECRET` must be a strong random value in production.
 
@@ -49,11 +49,14 @@ Package scripts are `dev/build/start/lint/test` (no other helpers).
 
 - Money stored as `Decimal(10,2)`; runtime math in integer halalas (`src/lib/money.ts`).
 - Daily attendance is the **single source of truth** — dashboard, weekly, reports all derive from `DailyAttendance` rows (demo: `listAttendance`).
-- **One project per person per day** (v1): unique `(personId, projectId, date)` enforced in `recordAttendanceBatch` (409/duplicate → upsert) and by DB `@@unique` in production.
+- **One payable day per person per date**: a second PRESENT mark for the same person+date elsewhere is skipped with conflict info (`{personId, existingProjectId, existingProjectName}`) and an atomic `POST /api/attendance/move` corrects it (snapshot preserved, both sides must be unlocked). DB `@@unique(personId, projectId, date)` still guards duplicates per project.
+- **Quick-mark fan-out**: `POST /api/attendance/quick-mark` records `PRESENT` across every eligible project (open assignment covering the date, ACTIVE project, working day). PRESENT honors the uniqueness rule (existing payable mark → skip + conflict). The status set is `PRESENT | LEAVE` — there is no ABSENT anywhere.
+- **Attendance status set**: `AttendanceStatus = PRESENT | LEAVE` (ABSENT was removed by request; day-close is now lock-only, materializing no rows — `autoCreated` column + auto-ABSENT logic deleted via migration `20261010000000_remove_absent_status`).
 - **Rate snapshots**: attendance stores `dailyRate` at record time; changing `Person.currentDailyRate` never rewrites history.
 - **Recording scope**: the attendance UI only offers `ACTIVE` projects (history for other statuses via weekly/reports/person pages); the API itself accepts any valid projectId — enforce status server-side if that ever matters.
 - Tests (`src/tests/unit/`): `money.test.ts` (helpers) + `calculation.test.ts` (scenarios: 200×6=1200, 150×6=900, multi-project, rate change, edit, delete, new week, project/global recalculation) + `people-table.test.tsx` + `dashboard.test.tsx` (jsdom component tests with mocked fetch/session). Vitest uses `environment: "node"` (jsdom only via per-file `// @vitest-environment jsdom`) with `@` aliased to `./src`.
-- **Week-window convention**: dashboard KPIs use rolling last-7-days, explicitly labelled "آخر ٧ أيام"; `/weekly` uses a user-picked 7-day window; DB `Week` rows are deterministic project-week scaffolding (`floor(daysSinceProjectStart/7)+1`) reserved for future settlement. These are intentionally different — never compare totals across them without stating the window.
+- **Week-window convention**: dashboard KPIs use the Saudi work week **Saturday → Thursday**, labelled "من السبت إلى الخميس"; `/weekly` uses a user-picked 7-day window; DB `Week` rows are deterministic project-week scaffolding (`floor(daysSinceProjectStart/7)+1`) reserved for future settlement. These are intentionally different — never compare totals across them without stating the window.
+- **No today strip**: the dashboard's "اليوم" card (present/absent/leave/rate) was removed by request — replaced by a grand-total card (`إجمالي تكلفة المشاريع`) plus an «الإجمالي» row at the bottom of the per-project cost table. `DashboardData` no longer has `today`/`TodaySummary`.
 - **Tables**: TanStack Table v9 installed, but the v8-style skill API is used via `@tanstack/react-table/legacy` (`useLegacyTable`, `legacyCreateColumnHelper`, `get*RowModel`, `LegacyColumnDef` — root `ColumnDef` is the incompatible new type). Reusable shell: `src/components/ui/data-table.tsx` (sort/filter/paginate, RTL Arabic).
 
 ---
@@ -91,7 +94,22 @@ Package scripts are `dev/build/start/lint/test` (no other helpers).
 - **User management**: `PATCH /api/users/[id]` (ADMIN only; name/role/active/password-reset with server-side scrypt hash, self-demote/deactivate blocked 403). Edit form on `/users` page with «حسابك» badge on own row.
 - **Settlement**: `/settlements` page (project → weeks table → per-person payment form). `GET /api/weeks?projectId=` lists deterministic weeks with dues/paid/status; `POST /api/weeks/[id]/payments` records payments (partial allowed, overpayment rejected 400, full payment → `SETTLED`), writes `Payment` + `AuditLog` rows (atomic `$transaction` in dbstore). Attendance recording/upsert is **blocked** on `SETTLED` weeks in both stores (400). Week math lives in `src/server/weekcalc.ts` and must stay identical across backends.
 - **Settlement detail + void**: selecting a week shows dues, payment ledger, and (if open) the settle form. `DELETE /api/weeks/[weekId]/payments/[paymentId]` is ADMIN-only, reopens the week when a balance reappears, and writes a `VOID` audit entry. `dbstore.listWeeks` omits weeks with zero present rows to match demo derivation. The detail panel has a print-only settlement slip (dues, payments, signatures).
-- **Workforce selection**: project form has active-people checkboxes synced via `POST`/`DELETE /api/projects/[id]/assignments` (ADMIN/MANAGER; idempotent assign, end-dated unassign preserving history, same-day clash reopens). Assignment snapshots `dailyRate` like attendance. Team shown on project detail page (`GET /api/projects/[id]` returns `{project, team}`).
-- **Delete people**: `DELETE /api/people/[id]` (ADMIN/MANAGER; VIEWER → 403) with `ConfirmDialog` UI. Restrict rule: blocked 409 by attendance, payments, or open assignments (deactivate instead); ended-only assignment rows are cascade-removed with a history-free person.
+- **Settle-all (full project)**: «تسوية كاملة للمشروع» button in the project selector card loops over every OPEN week with a remaining balance and POSTs each person's due−paid to the existing per-week payments endpoint (notes «تسوية كاملة للمشروع») — no new API; partial failure reports «تم إكمال N من M» and refreshes the list. Purely client-side in `src/app/settlements/page.tsx`.
+- **Comprehensive settlement tab**: `/settlements` has a tab toggle («الأسابيع» ↔ «تصفيه شاملة»). The summary tab computes the Sat→Thu window client-side (same convention as dashboard) and fetches `GET /api/attendance?from=&to=` (all projects) + `GET /api/people` (for `person.type`), then aggregates PRESENT rows across **whichever projects the workforce actually worked in the window** (checkboxes, all selected by default, with a «تحديد كل المشاريع / إلغاء تحديد الكل» toggle). It renders a per-project breakdown, craftsman/worker group tables (with a per-person project count), group + grand totals, and a print-only slip (per-project + grouped-by-type tables, signature block). No dedicated API — reuses attendance/people reads; rendering gated by `tab === "summary"`.
+- **Worker payoff**: `/settlements/worker` settles one person across all projects/weeks. `GET /api/settlements/statement?personId=` returns dues + history + totals; `POST /api/settlements/pay` allocates oldest-first (partial allowed, overpayment 400, fully-paid weeks → `SETTLED`).
+- **Workforce selection**: project form has active-people checkboxes synced via `POST`/`DELETE /api/projects/[id]/assignments` (ADMIN; idempotent assign, end-dated unassign preserving history, same-day clash reopens). Assignment snapshots `dailyRate` like attendance. Team shown on project detail page (`GET /api/projects/[id]` returns `{project, team}`).
+- **Quick check-in**: `/attendance` (nav directly under dashboard, titled «الحضور اليومي») is workforce-first — one «حاضر» button per worker, fan-out recording via quick-mark. `GET /api/assignments` feeds open assignments with denormalized names.
+- **Project attendance**: `/attendance/by-project` is the project-scoped view (team first, then unassigned actives; every tap records unambiguously into the selected project) and hosts the day-close UI (lock-only close banner + ADMIN reopen). Both attendance pages share the same batch/move/close APIs.
+- **Delete people**: `DELETE /api/people/[id]` (ADMIN only) with `ConfirmDialog` UI. Restrict rule: blocked 409 by attendance, payments, or open assignments (deactivate instead); ended-only assignment rows are cascade-removed with a history-free person.
 - No hard-deletes for people/projects by design (attendance history has FKs) — deactivate via `active`/`status` instead. Shared Zod schemas in `src/lib/validation.ts` (used by routes and forms).
 - Playwright E2E (not installed); CI workflow; pre-commit hooks
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

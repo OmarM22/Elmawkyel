@@ -86,6 +86,14 @@ export function voidWeekPayment(...args: Parameters<Backend["voidWeekPayment"]>)
   return backend().then((b) => b.voidWeekPayment(...args));
 }
 
+export function getWorkerStatement(...args: Parameters<Backend["getWorkerStatement"]>) {
+  return backend().then((b) => b.getWorkerStatement(...args));
+}
+
+export function payWorker(...args: Parameters<Backend["payWorker"]>) {
+  return backend().then((b) => b.payWorker(...args));
+}
+
 export function assignPersonToProject(...args: Parameters<Backend["assignPersonToProject"]>) {
   return backend().then((b) => b.assignPersonToProject(...args));
 }
@@ -98,8 +106,40 @@ export function getProjectTeam(...args: Parameters<Backend["getProjectTeam"]>) {
   return backend().then((b) => b.getProjectTeam(...args));
 }
 
+export function listOpenAssignments(...args: Parameters<Backend["listOpenAssignments"]>) {
+  return backend().then((b) => b.listOpenAssignments(...args));
+}
+
 export function deletePerson(...args: Parameters<Backend["deletePerson"]>) {
   return backend().then((b) => b.deletePerson(...args));
+}
+
+export function deleteProject(...args: Parameters<Backend["deleteProject"]>) {
+  return backend().then((b) => b.deleteProject(...args));
+}
+
+export function getDayClose(...args: Parameters<Backend["getDayClose"]>) {
+  return backend().then((b) => b.getDayClose(...args));
+}
+
+export function isAttendanceDayClosed(...args: Parameters<Backend["isAttendanceDayClosed"]>) {
+  return backend().then((b) => b.isAttendanceDayClosed(...args));
+}
+
+export function closeAttendanceDay(...args: Parameters<Backend["closeAttendanceDay"]>) {
+  return backend().then((b) => b.closeAttendanceDay(...args));
+}
+
+export function reopenAttendanceDay(...args: Parameters<Backend["reopenAttendanceDay"]>) {
+  return backend().then((b) => b.reopenAttendanceDay(...args));
+}
+
+export function moveAttendance(...args: Parameters<Backend["moveAttendance"]>) {
+  return backend().then((b) => b.moveAttendance(...args));
+}
+
+export function quickMark(...args: Parameters<Backend["quickMark"]>) {
+  return backend().then((b) => b.quickMark(...args));
 }
 
 export function listAttendance(...args: Parameters<Backend["listAttendance"]>) {

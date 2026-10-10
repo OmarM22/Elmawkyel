@@ -2,30 +2,16 @@
 
 import { useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
+import Image from "next/image";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Minus, Plane, TriangleAlert } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { DAY_OF_WEEK_LABELS, PERSON_TYPE_LABELS, type AttendanceRow, type PersonRow, type ProjectRow, type TeamMember, type WeekSummary } from "@/types";
-import { formatSAR } from "@/lib/money";
-
-type StatusChoice = "PRESENT" | "ABSENT" | "LEAVE";
-
-const STATUS_META: { value: StatusChoice; label: string; icon: typeof Check }[] = [
-  { value: "PRESENT", label: "حاضر", icon: Check },
-  { value: "ABSENT", label: "غائب", icon: Minus },
-  { value: "LEAVE", label: "إجازة", icon: Plane },
-];
-
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-const JS_DAY_TO_NAME = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+import { formatSAR, mulRateHours, sumHalalas } from "@/lib/money";
+import { PERSON_TYPE_LABELS, type AttendanceConflict, type AttendanceRow, type OpenAssignment, type PersonRow } from "@/types";
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -33,324 +19,405 @@ async function getJson<T>(url: string): Promise<T> {
   return res.json();
 }
 
+const JS_DAY_TO_NAME = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+type MarkStatus = "PRESENT";
+
+/*
+ * Workforce-first attendance: every active worker is listed with a single
+ * action — حاضر. Marking records across every eligible project (open
+ * assignment, ACTIVE project, working day). UNIQUE(person, date) for
+ * PRESENT is enforced server-side with conflict + move.
+ */
 export default function AttendancePage() {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
-  const canEdit = session?.user?.role === "ADMIN" || session?.user?.role === "MANAGER";
+  const canEdit = session?.user?.role === "ADMIN";
 
-  const [projectId, setProjectId] = useState("");
   const [date, setDate] = useState(todayStr());
-  const [choices, setChoices] = useState<Record<string, StatusChoice>>({});
-  const [notes, setNotes] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<{
+    personName: string;
+    status: MarkStatus;
+    names: string[];
+  } | null>(null);
+  const [conflicts, setConflicts] = useState<Record<string, AttendanceConflict[]>>({});
 
-  const { data: projectsData } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => getJson<{ projects: ProjectRow[] }>("/api/projects"),
-  });
   const { data: peopleData, isLoading: peopleLoading } = useQuery({
     queryKey: ["people-active"],
     queryFn: () => getJson<{ people: PersonRow[] }>("/api/people?active=true"),
   });
-  const { data: existing } = useQuery({
-    queryKey: ["attendance", projectId, date],
+  const { data: assignmentsData } = useQuery({
+    queryKey: ["assignments-open"],
+    queryFn: () => getJson<{ assignments: OpenAssignment[] }>("/api/assignments"),
+  });
+  const { data: todayData } = useQuery({
+    queryKey: ["attendance", "day", date],
     queryFn: () =>
-      getJson<{ attendance: AttendanceRow[] }>(
-        `/api/attendance?projectId=${projectId}&from=${date}&to=${date}`,
-      ),
-    enabled: projectId !== "" && date !== "",
+      getJson<{ attendance: AttendanceRow[] }>(`/api/attendance?from=${date}&to=${date}`),
+    enabled: date !== "",
   });
 
-  const people = useMemo(() => peopleData?.people ?? [], [peopleData]);
-  const existingByPerson = useMemo(() => {
-    const map = new Map<string, AttendanceRow>();
-    for (const r of existing?.attendance ?? []) map.set(r.personId, r);
-    return map;
-  }, [existing]);
-
-  // Non-blocking warning when the date falls on a project rest day.
-  const selectedProject = useMemo(
-    () => projectsData?.projects.find((p) => p.id === projectId) ?? null,
-    [projectsData, projectId],
-  );
-  const dateDayName = useMemo(() => {
+  const dayName = useMemo(() => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
     return JS_DAY_TO_NAME[new Date(`${date}T00:00:00.000Z`).getUTCDay()];
   }, [date]);
-  const isNonWorkingDay =
-    !!selectedProject && !!dateDayName && !selectedProject.workingDays.includes(dateDayName);
 
-  // Project team scope (defaults to team-only when a team is assigned).
-  const { data: teamData } = useQuery({
-    queryKey: ["project", projectId],
-    queryFn: () => getJson<{ project: ProjectRow; team: TeamMember[] }>(`/api/projects/${projectId}`),
-    enabled: projectId !== "",
-  });
-  const team = useMemo(() => teamData?.team ?? [], [teamData?.team]);
-  const [teamOnly, setTeamOnly] = useState(true);
-  const visiblePeople = useMemo(() => {
-    if (!teamOnly || team.length === 0) return people;
-    const ids = new Set(team.map((t) => t.personId));
-    return people.filter((p) => ids.has(p.id));
-  }, [people, team, teamOnly]);
+  const people = useMemo(() => {
+    const q = search.trim();
+    const all = peopleData?.people ?? [];
+    if (!q) return all;
+    return all.filter((p) => p.name.includes(q));
+  }, [peopleData, search]);
 
-  // Settled-week pre-check: fail early instead of after filling the grid.
-  const { data: weeksData } = useQuery({
-    queryKey: ["weeks", projectId],
-    queryFn: () => getJson<{ weeks: WeekSummary[] }>(`/api/weeks?projectId=${projectId}`),
-    enabled: projectId !== "",
-  });
-  const lockedWeek = useMemo(
+  const eligibleByPerson = useMemo(() => {
+    const map = new Map<string, OpenAssignment[]>();
+    if (!dayName) return map;
+    for (const a of assignmentsData?.assignments ?? []) {
+      if (!a.personActive) continue;
+      if (a.projectStatus !== "ACTIVE") continue;
+      if (!a.workingDays.includes(dayName)) continue;
+      const list = map.get(a.personId) ?? [];
+      list.push(a);
+      map.set(a.personId, list);
+    }
+    return map;
+  }, [assignmentsData, dayName]);
+
+  const rowsByPerson = useMemo(() => {
+    const map = new Map<string, AttendanceRow[]>();
+    for (const r of todayData?.attendance ?? []) {
+      const list = map.get(r.personId) ?? [];
+      list.push(r);
+      map.set(r.personId, list);
+    }
+    return map;
+  }, [todayData]);
+
+  const presentCount = useMemo(() => {
+    let n = 0;
+    for (const rows of rowsByPerson.values()) {
+      if (rows.some((r) => r.status === "PRESENT")) n += 1;
+    }
+    return n;
+  }, [rowsByPerson]);
+
+  const dayTotalHalalas = useMemo(
     () =>
-      (weeksData?.weeks ?? []).find(
-        (w) => w.status === "SETTLED" && date >= w.startDate && date <= w.endDate,
-      ) ?? null,
-    [weeksData, date],
+      sumHalalas(
+        (todayData?.attendance ?? [])
+          .filter((r) => r.status === "PRESENT")
+          .map((r) => mulRateHours(r.dailyRate, r.hours)),
+      ),
+    [todayData],
   );
 
-  // Live summary of the current grid state (counts + cost at snapshot rates).
-  const summary = useMemo(() => {
-    let present = 0;
-    let absent = 0;
-    let leave = 0;
-    let halalas = 0;
-    for (const p of visiblePeople) {
-      const st = choices[p.id] ?? existingByPerson.get(p.id)?.status ?? "PRESENT";
-      if (st === "PRESENT") {
-        present += 1;
-        halalas += Math.round(p.currentDailyRate * 100);
-      } else if (st === "ABSENT") {
-        absent += 1;
-      } else {
-        leave += 1;
-      }
-    }
-    return { present, absent, leave, halalas };
-  }, [visiblePeople, choices, existingByPerson]);
-
-  function setChoice(id: string, value: StatusChoice) {
-    setChoices((c) => ({ ...c, [id]: value }));
+  async function refresh() {
+    await queryClient.invalidateQueries({ queryKey: ["attendance"] });
+    await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    await queryClient.invalidateQueries({ queryKey: ["weeks"] });
   }
 
-  function markAllPresent() {
-    const next: Record<string, StatusChoice> = {};
-    for (const p of visiblePeople) next[p.id] = "PRESENT";
-    setChoices(next);
-  }
-
-  async function submit() {
-    if (!projectId || !date) return;
-    setSaving(true);
+  async function mark(personId: string, status: MarkStatus) {
+    const key = `${personId}:${status}`;
+    setBusyKey(key);
     setError(null);
-    setResult(null);
-    const records = visiblePeople.map((p) => ({
-      personId: p.id,
-      status: choices[p.id] ?? "PRESENT",
-      notes: notes[p.id]?.trim() ? notes[p.id].trim() : undefined,
-    }));
+    setLastResult(null);
     try {
-      const res = await fetch("/api/attendance", {
+      const res = await fetch("/api/attendance/quick-mark", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, date, records }),
+        body: JSON.stringify({ personId, date, status }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error || "فشل تسجيل الحضور");
-      setResult(`تم الحفظ: ${body.recorded} جديد، ${body.updated} محدّث`);
-      await queryClient.invalidateQueries({ queryKey: ["attendance"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      if (!res.ok) throw new Error(body.error || "فشل التسجيل");
+      const skipped = (body.skipped ?? []) as AttendanceConflict[];
+      setConflicts((c) => ({ ...c, [personId]: skipped }));
+      const recorded = (body.projects ?? []) as { projectId: string; projectName: string }[];
+      const personName = peopleData?.people.find((p) => p.id === personId)?.name ?? "";
+      setLastResult({ personName, status, names: recorded.map((p) => p.projectName) });
+      await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "فشل تسجيل الحضور");
+      setError(e instanceof Error ? e.message : "فشل التسجيل");
     } finally {
-      setSaving(false);
+      setBusyKey(null);
+    }
+  }
+
+  async function moveHere(personId: string, toProjectId: string) {
+    setMovingId(personId);
+    try {
+      const res = await fetch("/api/attendance/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ personId, date, toProjectId }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "فشل النقل");
+      setConflicts((c) => {
+        const next = { ...c };
+        delete next[personId];
+        return next;
+      });
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "فشل النقل");
+    } finally {
+      setMovingId(null);
     }
   }
 
   return (
     <AppShell>
-      <div className="mx-auto flex max-w-5xl flex-col gap-6">
-        <div>
-          <h1 className="text-2xl font-bold">تسجيل اليومية</h1>
-          <p className="text-sm text-muted-foreground">
-            اختر المشروع والتاريخ، ثم سجّل حضور جميع الأفراد دفعة واحدة
-          </p>
+      <div className="mx-auto flex max-w-4xl flex-col gap-6 print:hidden">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold">الحضور اليومي</h1>
+            <p className="text-sm text-muted-foreground">
+              علّم العامل حاضراً في مواقع عمله — حاضر {presentCount} من {people.length} •{" "}
+              {date}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-sm font-semibold text-primary">
+              قيمة الحضور اليوم: {formatSAR(dayTotalHalalas)}
+            </div>
+            <Button variant="outline" onClick={() => window.print()}>
+              طباعة الكشف
+            </Button>
+          </div>
         </div>
 
         <Card>
           <CardContent className="grid grid-cols-1 gap-4 pt-6 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="project" className="text-sm font-medium">
-                المشروع
-              </label>
-              <select
-                id="project"
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <option value="">اختر المشروع…</option>
-                {(projectsData?.projects ?? [])
-                  .filter((p) => p.status === "ACTIVE")
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="date" className="text-sm font-medium">
+              <label htmlFor="att-date" className="text-sm font-medium">
                 التاريخ
               </label>
-              <Input id="date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <Input
+                id="att-date"
+                type="date"
+                value={date}
+                onChange={(e) => {
+                  setDate(e.target.value);
+                  setConflicts({});
+                  setLastResult(null);
+                }}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="att-search" className="text-sm font-medium">
+                بحث عن عامل
+              </label>
+              <Input
+                id="att-search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="اكتب الاسم…"
+              />
             </div>
           </CardContent>
         </Card>
 
-        {isNonWorkingDay && selectedProject && dateDayName && (
-          <Card className="border-warning/50">
-            <CardContent className="pt-6">
-              <p className="flex items-center gap-2 text-sm font-medium text-warning">
-                <TriangleAlert className="size-4" />
-                تنبيه: يوم {DAY_OF_WEEK_LABELS[dateDayName]} ({date}) ليس من أيام العمل المسجلة لهذا المشروع
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                أيام العمل: {selectedProject.workingDays.map((d) => DAY_OF_WEEK_LABELS[d] || d).join("، ")} —
-                يمكنك المتابعة عند الحاجة (عمل إضافي).
-              </p>
-            </CardContent>
-          </Card>
+        {error && (
+          <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </p>
         )}
 
-        {!projectId && (
+        {lastResult && (
+          <p
+            role="status"
+            className={
+              lastResult.names.length > 0
+                ? "rounded-md bg-success/10 px-3 py-2 text-sm text-success"
+                : "rounded-md bg-warning/10 px-3 py-2 text-sm text-warning"
+            }
+          >
+            {lastResult.names.length > 0
+              ? `تم تسجيل ${lastResult.personName} حاضراً في: ${lastResult.names.join("، ")}`
+              : `لم يتم التسجيل في أي مشروع — ${lastResult.personName} غير معين في مشروع يعمل بهذا التاريخ`}
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-border/70 bg-card/40 px-3 py-2 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden className="size-2 rounded-full bg-success" />
+            مسجَّل حضور
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden className="size-2 rounded-full bg-warning" />
+            إجازة
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden className="size-2 rounded-full bg-border" />
+            لم يُسجَّل
+          </span>
+        </div>
+
+        {peopleLoading ? (
           <Card>
             <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground">اختر المشروع لعرض الأفراد وتسجيل حضورهم.</p>
+              <div className="h-40 animate-pulse rounded-lg bg-muted" />
             </CardContent>
           </Card>
-        )}
-
-        {projectId && team.length > 0 && (
-          <label className="flex items-center gap-2 text-sm font-medium">
-            <input
-              type="checkbox"
-              checked={teamOnly}
-              onChange={(e) => setTeamOnly(e.target.checked)}
-              className="size-4"
-            />
-            عرض فريق المشروع فقط ({team.length})
-          </label>
-        )}
-
-        {projectId && (
+        ) : people.length === 0 ? (
           <Card>
-            <CardHeader className="flex-row items-center justify-between">
-              <CardTitle>كشف الحضور — {date}</CardTitle>
-              {canEdit && (
-                <Button variant="outline" size="sm" onClick={markAllPresent}>
-                  تحديد الكل حاضر
-                </Button>
-              )}
-            </CardHeader>
-            <CardContent className="flex flex-col gap-2">
-              {lockedWeek && (
-                <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  هذا اليوم ({date}) ضمن الأسبوع {lockedWeek.weekNumber} المسوّى — لا يمكن تسجيل أو تعديل الحضور.
-                </p>
-              )}
-              {peopleLoading && <div className="h-24 animate-pulse rounded-lg bg-muted" />}
-              {!peopleLoading && visiblePeople.length === 0 && (
-                <p className="text-sm text-muted-foreground">لا يوجد عمال لعرضهم.</p>
-              )}
-              {visiblePeople.map((person) => {
-                const current = choices[person.id] ?? existingByPerson.get(person.id)?.status ?? "PRESENT";
-                return (
-                  <div
-                    key={person.id}
-                    className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{person.name}</span>
-                        <Badge variant={person.type === "CRAFTSMAN" ? "default" : "secondary"}>
-                          {PERSON_TYPE_LABELS[person.type]}
-                        </Badge>
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        الأجر اليومي: {person.currentDailyRate} ر.س
-                        {existingByPerson.has(person.id) && " • مسجل مسبقاً لهذا اليوم"}
-                      </div>
+            <CardContent className="pt-6">
+              <p className="text-sm text-muted-foreground">لا يوجد عمال مطابقون.</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {people.map((p) => {
+              const eligible = eligibleByPerson.get(p.id) ?? [];
+              const rows = rowsByPerson.get(p.id) ?? [];
+              const present = rows.find((r) => r.status === "PRESENT");
+              const other = !present ? rows[0] : undefined;
+              const personConflicts = conflicts[p.id] ?? [];
+              return (
+                <div
+                  key={p.id}
+                  className={cn(
+                    "flex flex-col gap-2 rounded-lg border bg-card p-3 sm:flex-row sm:items-center",
+                    present && "border-success/40 bg-success/5",
+                    !present && other && "opacity-75",
+                  )}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{p.name}</span>
+                      <Badge variant={p.type === "CRAFTSMAN" ? "default" : "secondary"}>
+                        {PERSON_TYPE_LABELS[p.type]}
+                      </Badge>
+                      {present ? (
+                        <Badge variant="success">مسجَّل حضور</Badge>
+                      ) : other ? (
+                        <Badge variant="warning">إجازة</Badge>
+                      ) : (
+                        <Badge variant="outline">لم يُسجَّل</Badge>
+                      )}
                     </div>
-                    <div className="flex items-center gap-1" role="group" aria-label={`حالة ${person.name}`}>
-                      {STATUS_META.map((s) => {
-                        const Icon = s.icon;
-                        const active = current === s.value;
-                        return (
-                          <button
-                            key={s.value}
-                            type="button"
-                            disabled={!canEdit}
-                            onClick={() => setChoice(person.id, s.value)}
-                            aria-pressed={active}
-                            className={cn(
-                              "flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-                              active
-                                ? s.value === "PRESENT"
-                                  ? "border-transparent bg-success/15 text-success"
-                                  : s.value === "ABSENT"
-                                    ? "border-transparent bg-destructive/15 text-destructive"
-                                    : "border-transparent bg-warning/15 text-warning"
-                                : "text-muted-foreground hover:bg-accent",
-                            )}
-                          >
-                            <Icon className="size-3.5" />
-                            {s.label}
-                          </button>
-                        );
-                      })}
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {eligible.length > 0 ? (
+                        <>المواقع: {eligible.map((a) => a.projectName).join("، ")}</>
+                      ) : (
+                        "غير معين في موقع عمل اليوم"
+                      )}
                     </div>
-                    {canEdit && (
-                      <Input
-                        placeholder="ملاحظات (اختياري)"
-                        value={notes[person.id] ?? ""}
-                        onChange={(e) => setNotes((n) => ({ ...n, [person.id]: e.target.value }))}
-                        className="sm:w-48"
-                        aria-label={`ملاحظات ${person.name}`}
-                      />
+                    {present && (
+                      <div className="mt-1 text-xs font-medium text-success">
+                        حاضر في {present.projectName}
+                      </div>
+                    )}
+                    {!present && other && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        إجازة في {other.projectName}
+                      </div>
+                    )}
+                    {!present && personConflicts.length > 0 && (
+                      <div className="mt-1 text-xs font-medium text-warning">
+                        مسجل حاضر في «{personConflicts[0].existingProjectName}» — يوم مدفوع واحد لكل شخص.
+                      </div>
                     )}
                   </div>
-                );
-              })}
-
-              {!canEdit && (
-                <p className="text-sm text-muted-foreground">صلاحية العرض فقط — التسجيل للمشرفين.</p>
-              )}
-              {result && (
-                <p role="status" className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">
-                  {result}
-                </p>
-              )}
-              {error && (
-                <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {error}
-                </p>
-              )}
-              {visiblePeople.length > 0 && (
-                <p className="text-sm text-muted-foreground">
-                  الملخص: {summary.present} حاضر • {summary.absent} غائب • {summary.leave} إجازة • الإجمالي:{" "}
-                  {formatSAR(summary.halalas)}
-                </p>
-              )}
-              {canEdit && visiblePeople.length > 0 && (
-                <Button onClick={submit} disabled={saving || !!lockedWeek} className="mt-2 w-full sm:w-auto">
-                  {saving ? "جارٍ الحفظ…" : `حفظ حضور ${visiblePeople.length} أفراد`}
-                </Button>
-              )}
-            </CardContent>
-          </Card>
+                  {canEdit && !present && eligible.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      <Button
+                        size="sm"
+                        className="min-h-[44px]"
+                        disabled={busyKey === `${p.id}:PRESENT`}
+                        onClick={() => mark(p.id, "PRESENT")}
+                      >
+                        {busyKey === `${p.id}:PRESENT` ? "…" : "حاضر"}
+                      </Button>
+                    </div>
+                  )}
+                  {!present && personConflicts.length > 0 && canEdit && (
+                    <div className="flex flex-wrap gap-1">
+                      {eligible.map((a) => (
+                        <Button
+                          key={a.projectId}
+                          size="sm"
+                          variant="outline"
+                          disabled={movingId === p.id}
+                          onClick={() => moveHere(p.id, a.projectId)}
+                        >
+                          {movingId === p.id ? "جارٍ النقل…" : `نقل إلى ${a.projectName}`}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
+      </div>
+
+      <div className="hidden print:block">
+        <div className="flex items-center justify-between border-b border-foreground/20 pb-3">
+          <Image
+            src="/tarek-al-wakil-logo.png"
+            alt="شعار طارق الوكيل"
+            width={1408}
+            height={768}
+            className="h-12 w-auto object-contain"
+          />
+          <span className="text-xl font-bold">الوكيل — كشف الحضور اليومي</span>
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          التاريخ: {date} • حاضر: {presentCount} • من {people.length} • تاريخ الطباعة:{" "}
+          {new Date().toISOString().slice(0, 10)}
+        </p>
+        <table className="mt-4 w-full text-sm">
+          <thead>
+            <tr className="border-b">
+              <th className="py-2 text-right font-medium">العامل</th>
+              <th className="py-2 text-right font-medium">النوع</th>
+              <th className="py-2 text-right font-medium">الحالة</th>
+              <th className="py-2 text-right font-medium">التوقيع</th>
+            </tr>
+          </thead>
+          <tbody>
+            {people.map((p) => {
+              const rows = rowsByPerson.get(p.id) ?? [];
+              const presentRow = rows.find((r) => r.status === "PRESENT");
+              const otherRow = !presentRow ? rows[0] : undefined;
+              return (
+                <tr key={p.id} className="border-b">
+                  <td className="py-2">{p.name}</td>
+                  <td className="py-2">{PERSON_TYPE_LABELS[p.type]}</td>
+                  <td className="py-2 font-semibold">
+                    {presentRow
+                      ? `حاضر في ${presentRow.projectName}`
+                      : otherRow
+                        ? `إجازة في ${otherRow.projectName}`
+                        : "لم يسجل"}
+                  </td>
+                  <td className="py-2">........................</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="mt-8 grid grid-cols-2 gap-8 text-sm">
+          <div>
+            <p>توقيع المشرف: ........................</p>
+            <p className="mt-1">الاسم: ........................</p>
+          </div>
+          <div>
+            <p>توقيع مسؤول الحضور: ........................</p>
+            <p className="mt-1">الاسم: ........................</p>
+          </div>
+        </div>
       </div>
     </AppShell>
   );

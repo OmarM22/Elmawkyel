@@ -47,7 +47,7 @@ export async function PATCH(
 /**
  * Hard-delete a person with no history. Blocked (409) when attendance,
  * payments, or an open assignment reference them — deactivate instead.
- * ADMIN/MANAGER only.
+ * ADMIN only.
  */
 export async function DELETE(
   _req: Request,

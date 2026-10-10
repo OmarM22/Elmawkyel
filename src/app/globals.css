@@ -2,51 +2,111 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * TAREK AL-WAKIL — premium charcoal + muted copper identity.
+ * Surfaces are stone-charcoal; copper is the accent only, never a large fill.
+ */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.35 0.12 255);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.35 0.12 255);
-  --success: oklch(0.55 0.15 150);
-  --warning: oklch(0.7 0.15 80);
+  --radius: 0.4rem;
+
+  /* Stone / charcoal surfaces */
+  --background: #111416;
+  --foreground: #f3eee8;
+  --card: #20272b;
+  --card-foreground: #f3eee8;
+  --popover: #293137;
+  --popover-foreground: #f3eee8;
+  --sidebar: #191e21;
+  --elevated: #293137;
+
+  /* Muted copper accent */
+  --primary: #b87958;
+  --primary-foreground: #17100b;
+  --copper-hover: #ca9271;
+  --accent: #262d31;
+  --accent-foreground: #f3eee8;
+
+  --secondary: #293137;
+  --secondary-foreground: #f3eee8;
+  --muted: #191e21;
+  --muted-foreground: #b5b0aa;
+
+  /* Semantic status */
+  --success: #6ea885;
+  --warning: #c69a55;
+  --destructive: #b3493f;
+
+  --border: #3a4144;
+  --input: #3a4144;
+  --input-bg: #181d20;
+  --ring: #b87958;
+  --chart-1: #b87958;
+  --chart-2: #ca9271;
+
+  color-scheme: dark;
 }
 
+/* Keep the .dark variant in sync for any component toggling it. */
 .dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.6 0.15 255);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.6 0.15 255);
-  --success: oklch(0.65 0.15 150);
-  --warning: oklch(0.75 0.15 80);
+  --radius: 0.4rem;
+  --background: #111416;
+  --foreground: #f3eee8;
+  --card: #20272b;
+  --card-foreground: #f3eee8;
+  --popover: #293137;
+  --popover-foreground: #f3eee8;
+  --sidebar: #191e21;
+  --elevated: #293137;
+  --primary: #b87958;
+  --primary-foreground: #17100b;
+  --copper-hover: #ca9271;
+  --accent: #262d31;
+  --accent-foreground: #f3eee8;
+  --secondary: #293137;
+  --secondary-foreground: #f3eee8;
+  --muted: #191e21;
+  --muted-foreground: #b5b0aa;
+  --success: #6ea885;
+  --warning: #c69a55;
+  --destructive: #b3493f;
+  --border: #3a4144;
+  --input: #3a4144;
+  --input-bg: #181d20;
+  --ring: #b87958;
+  color-scheme: dark;
+}
+
+/* Light mode: warm ivory paper + deepened copper for contrast. */
+.light {
+  --radius: 0.4rem;
+  --background: #f6f4f0;
+  --foreground: #1f1b17;
+  --card: #ffffff;
+  --card-foreground: #1f1b17;
+  --popover: #ffffff;
+  --popover-foreground: #1f1b17;
+  --sidebar: #efece6;
+  --elevated: #eae6df;
+  --primary: #a96748;
+  --primary-foreground: #ffffff;
+  --copper-hover: #8f5438;
+  --accent: #e6e0d7;
+  --accent-foreground: #1f1b17;
+  --secondary: #e9e4dc;
+  --secondary-foreground: #1f1b17;
+  --muted: #ede9e3;
+  --muted-foreground: #6f6861;
+  --success: #1a7a46;
+  --warning: #a16207;
+  --destructive: #b8453b;
+  --border: #d8d2ca;
+  --input: #d8d2ca;
+  --input-bg: #ffffff;
+  --ring: #a96748;
+  --chart-1: #a96748;
+  --chart-2: #b87958;
+
+  color-scheme: light;
 }
 
 @theme inline {
@@ -59,8 +119,11 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-elevated: var(--elevated);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-copper-hover: var(--copper-hover);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -68,12 +131,15 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
   --color-success: var(--success);
   --color-warning: var(--warning);
-  --font-sans: "Cairo", "Tahoma", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-bg: var(--input-bg);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --font-sans: "Cairo", "IBM Plex Sans Arabic", "Tahoma", "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
 @layer base {
@@ -91,5 +157,63 @@
   *:focus-visible {
     outline: 2px solid var(--color-ring);
     outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 40%, transparent);
+  }
+  th,
+  td {
+    font-variant-numeric: tabular-nums;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 6px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* Printed sheets must stay light (dark theme is screen-only). */
+@media print {
+  :root {
+    --radius: 0.4rem;
+    --background: #ffffff;
+    --foreground: #1c1917;
+    --card: #ffffff;
+    --card-foreground: #1c1917;
+    --popover: #ffffff;
+    --popover-foreground: #1c1917;
+    --sidebar: #ffffff;
+    --elevated: #ffffff;
+    --primary: #7c5a44;
+    --primary-foreground: #ffffff;
+    --copper-hover: #7c5a44;
+    --accent: #f4f2ef;
+    --accent-foreground: #1c1917;
+    --secondary: #f4f2ef;
+    --secondary-foreground: #1c1917;
+    --muted: #f4f2ef;
+    --muted-foreground: #57534e;
+    --success: #166534;
+    --warning: #92400e;
+    --destructive: #991b1b;
+    --border: #d6d3d1;
+    --input: #d6d3d1;
+    --input-bg: #ffffff;
+    --ring: #7c5a44;
+    color-scheme: light;
+  }
+  * {
+    -webkit-print-color-adjust: economy;
+    print-color-adjust: economy;
   }
 }

@@ -50,13 +50,13 @@ export function DataTable<TData extends RowData>({
         <table className="w-full text-sm">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id} className="border-b bg-muted/50 text-muted-foreground">
+              <tr key={headerGroup.id} className="border-b bg-sidebar text-muted-foreground">
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
                     onClick={header.column.getToggleSortingHandler()}
                     className={cn(
-                      "px-3 py-2 text-right font-medium",
+                      "px-3 py-2.5 text-right text-xs font-semibold tracking-wide",
                       header.column.getCanSort() && "cursor-pointer select-none",
                     )}
                   >
@@ -80,7 +80,7 @@ export function DataTable<TData extends RowData>({
           </thead>
           <tbody>
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="border-b last:border-0 hover:bg-muted/30">
+              <tr key={row.id} className="border-b last:border-0 hover:bg-accent/50">
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-3 py-2">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -105,7 +105,7 @@ export function DataTable<TData extends RowData>({
           <select
             value={pageSize}
             onChange={(e) => table.setPageSize(Number(e.target.value))}
-            className="flex h-9 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-9 rounded-md border border-input bg-input-bg px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {PAGE_SIZES.map((size) => (
               <option key={size} value={size}>

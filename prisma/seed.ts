@@ -32,7 +32,11 @@ async function main() {
   if (!connectionString) throw new Error("DATABASE_URL is not set");
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
   try {
-    await seedReferenceData(prisma);
+    // Sample people/projects are demo-only. A real client database must stay
+    // empty so they can add their own — set SEED_SAMPLE_DATA=true to opt in.
+    if (process.env.SEED_SAMPLE_DATA === "true") {
+      await seedReferenceData(prisma);
+    }
     const existing = await prisma.user.findFirst({ where: { role: "ADMIN" } });
     if (existing) {
       console.log("Admin already exists — nothing to do.");

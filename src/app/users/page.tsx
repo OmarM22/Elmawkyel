@@ -25,7 +25,7 @@ const createSchema = z.object({
   email: z.string().trim().email("البريد الإلكتروني غير صالح"),
   name: z.string().trim().min(2, "أدخل الاسم"),
   password: z.string().min(8, "كلمة المرور ٨ أحرف على الأقل"),
-  role: z.enum(["ADMIN", "MANAGER", "VIEWER"]),
+  role: z.enum(["ADMIN"]),
 });
 
 type CreateValues = z.infer<typeof createSchema>;
@@ -189,8 +189,6 @@ export default function UsersPage() {
                       {...register("role")}
                       className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      <option value="VIEWER">مشاهد</option>
-                      <option value="MANAGER">مشرف</option>
                       <option value="ADMIN">مدير النظام</option>
                     </select>
                     {errors.role && <p className="text-sm text-destructive">{errors.role.message}</p>}

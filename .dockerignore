@@ -1,0 +1,28 @@
+node_modules
+.next
+out
+.git
+.gitignore
+.github
+.opencode
+.env
+.env.*
+*.log
+*.tsbuildinfo
+next-env.d.ts
+Thumbs.db
+.DS_Store
+deploy/*.bat
+deploy/*.ps1
+
+# Never bake private deployment data or secrets into the image.
+# The DB seed snapshot is mounted into the db container by compose, not copied here.
+deploy/.env
+deploy/.env.*
+deploy/db
+# Repo-only assets/docs tooling (not needed at runtime).
+*.md
+logo
+restart-tunnel.bat
+restart-tunnel.ps1
+

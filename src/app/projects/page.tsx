@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getCoreRowModel,
   getFilteredRowModel,
@@ -18,6 +18,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable } from "@/components/ui/data-table";
 import { DAY_OF_WEEK_LABELS, PROJECT_STATUS_LABELS, type ProjectRow } from "@/types";
 import { ProjectForm } from "./project-form";
@@ -39,14 +40,46 @@ const columnHelper = legacyCreateColumnHelper<ProjectRow>();
 
 export default function ProjectsPage() {
   const { data: session } = useSession();
+  const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({ queryKey: ["projects"], queryFn: fetchProjects });
-  const canManage = session?.user?.role === "ADMIN" || session?.user?.role === "MANAGER";
+  const canManage = session?.user?.role === "ADMIN";
 
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 10 });
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<ProjectRow | null>(null);
+  const [deleting, setDeleting] = useState<ProjectRow | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [forceMode, setForceMode] = useState(false);
+  const isAdmin = session?.user?.role === "ADMIN";
+
+  const doDelete = useCallback(async () => {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      const url = `/api/projects/${deleting.id}${forceMode ? "?force=true" : ""}`;
+      const res = await fetch(url, { method: "DELETE" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // 409 on a project with history → escalate to the force step (ADMIN).
+        if (res.status === 409 && !forceMode && isAdmin) {
+          setForceMode(true);
+          setDeleteError(body.error ?? "لا يمكن حذف هذا المشروع");
+        } else {
+          setDeleteError(body.error ?? "فشل الحذف");
+        }
+        return;
+      }
+      setDeleting(null);
+      setForceMode(false);
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [deleting, forceMode, isAdmin, queryClient]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous column value types need a top type
   const columns = useMemo<LegacyColumnDef<ProjectRow, any>[]>(
@@ -104,6 +137,20 @@ export default function ProjectsPage() {
                 تعديل
               </Button>
             )}
+            {canManage && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => {
+                  setDeleteError(null);
+                  setForceMode(false);
+                  setDeleting(row.original);
+                }}
+              >
+                حذف
+              </Button>
+            )}
           </span>
         ),
       }),
@@ -157,6 +204,29 @@ export default function ProjectsPage() {
             }}
           />
         )}
+
+        <ConfirmDialog
+          open={deleting !== null}
+          title={forceMode ? "حذف نهائي مع السجلات" : "حذف المشروع"}
+          message={
+            deleting
+              ? forceMode
+                ? `هذا المشروع له سجلات حضور ومدفوعات. الحذف النهائي سيمسح كل سجلاته نهائياً (${deleting.name}). هل أنت متأكد؟`
+                : `هل أنت متأكد من حذف ${deleting.name}؟ لا يمكن التراجع عن الحذف.`
+              : ""
+          }
+          confirmLabel={forceMode ? "حذف نهائي" : "حذف"}
+          error={deleteError}
+          busy={deleteBusy}
+          onConfirm={doDelete}
+          onCancel={() => {
+            if (!deleteBusy) {
+              setDeleting(null);
+              setForceMode(false);
+              setDeleteError(null);
+            }
+          }}
+        />
 
         {isLoading && (
           <Card>

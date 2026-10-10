@@ -12,10 +12,10 @@ describe("demo store user update", () => {
       email: "testedit@test.local",
       name: "قبل",
       passwordHash: "scrypt$old",
-      role: "VIEWER",
+      role: "ADMIN",
     });
-    const updated = await updateUser(created.id, { name: "بعد", role: "MANAGER", active: false });
-    expect(updated).toMatchObject({ name: "بعد", role: "MANAGER", active: false });
+    const updated = await updateUser(created.id, { name: "بعد", role: "ADMIN", active: false });
+    expect(updated).toMatchObject({ name: "بعد", role: "ADMIN", active: false });
     expect(updated).not.toHaveProperty("passwordHash");
     expect(updated?.username).toBe("testedit"); // untouched fields preserved
   });
@@ -26,7 +26,7 @@ describe("demo store user update", () => {
       email: "testpass@test.local",
       name: "باس",
       passwordHash: "scrypt$old",
-      role: "VIEWER",
+      role: "ADMIN",
     });
     await updateUser(created.id, { passwordHash: "scrypt$new" });
     const again = await updateUser(created.id, { name: "باس2" });

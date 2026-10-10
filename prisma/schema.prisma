@@ -31,7 +31,6 @@ enum WeekStatus {
 
 enum AttendanceStatus {
   PRESENT
-  ABSENT
   LEAVE
 }
 
@@ -84,6 +83,7 @@ model Project {
   weeks         Week[]
   attendances   DailyAttendance[]
   payments      Payment[]
+  dayCloses     AttendanceDayClose[]
 
   @@index([status])
 }
@@ -167,6 +167,23 @@ model DailyAttendance {
   @@index([date])
 }
 
+// ─── ATTENDANCE DAY CLOSE ───────────────────────────────────────────────────
+// Locks one project+date after review. Closing just freezes the day; reopening
+// removes the lock. Records are never touched by either operation.
+
+model AttendanceDayClose {
+  id        String   @id @default(cuid())
+  projectId String
+  date      DateTime @db.Date
+  closedBy  String   // app User id
+  closedAt  DateTime @default(now())
+
+  project   Project  @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, date])
+  @@index([projectId, date])
+}
+
 // ─── PAYMENT ─────────────────────────────────────────────────────────────────
 
 model Payment {
@@ -209,8 +226,6 @@ model AuditLog {
 
 enum Role {
   ADMIN
-  MANAGER
-  VIEWER
 }
 
 model User {
@@ -219,7 +234,7 @@ model User {
   email        String   @unique
   name         String
   passwordHash String
-  role         Role     @default(VIEWER)
+  role         Role     @default(ADMIN)
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

@@ -2,14 +2,16 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import { signIn } from "next-auth/react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Eye, EyeOff, Loader2, HardHat } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { cn } from "@/lib/utils";
 
 const loginSchema = z.object({
@@ -49,14 +51,32 @@ function LoginForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
-      <Card className="w-full max-w-md shadow-lg">
-        <CardHeader className="items-center text-center">
-          <div className="flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-            <HardHat className="size-7" />
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
+      <ThemeToggle className="absolute left-4 top-4 z-20" />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(900px_500px_at_50%_-10%,rgba(184,121,88,0.10),transparent_60%)] dark:bg-[radial-gradient(900px_500px_at_50%_-10%,rgba(184,121,88,0.18),transparent_60%)]"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(700px_420px_at_85%_110%,rgba(184,121,88,0.05),transparent_55%)] dark:bg-[radial-gradient(700px_420px_at_85%_110%,rgba(184,121,88,0.08),transparent_55%)]"
+      />
+      <Card className="relative z-10 w-full max-w-md border-border/70 shadow-2xl shadow-black/20 dark:shadow-black/40">
+        <CardHeader className="items-center gap-4 text-center">
+          <div className="rounded-lg border border-border/70 bg-white p-2.5">
+            <Image
+              src="/tarek-al-wakil-logo.png"
+              alt="شعار طارق الوكيل"
+              width={1408}
+              height={768}
+              priority
+              className="h-16 w-auto object-contain"
+            />
           </div>
-          <CardTitle className="text-2xl">الوكيل</CardTitle>
-          <CardDescription>نظام إدارة حضور العمال — تسجيل الدخول</CardDescription>
+          <div className="flex flex-col gap-1">
+            <CardTitle className="text-2xl font-bold tracking-wide">الوكيل</CardTitle>
+            <CardDescription>نظام طارق الوكيل لإدارة حضور العمال — تسجيل الدخول</CardDescription>
+          </div>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>

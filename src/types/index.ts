@@ -1,12 +1,12 @@
 /* Shared domain + API types (plain JSON shapes, Decimal serialized as number). */
 
-export type Role = "ADMIN" | "MANAGER" | "VIEWER";
+export type Role = "ADMIN";
 
 export type PersonType = "CRAFTSMAN" | "WORKER";
 
 export type ProjectStatus = "ACTIVE" | "COMPLETED" | "ON_HOLD" | "CANCELLED";
 
-export type AttendanceStatus = "PRESENT" | "ABSENT" | "LEAVE";
+export type AttendanceStatus = "PRESENT" | "LEAVE";
 
 export interface PersonRow {
   id: string;
@@ -82,28 +82,17 @@ export interface DailyPoint {
   halalas: number;
 }
 
-export interface TodaySummary {
-  date: string;
-  present: number;
-  absent: number;
-  leave: number;
-  absentPeople: { id: string; name: string }[];
-  missingProjects: { id: string; name: string }[];
-}
-
 export interface DashboardData {
   totalProjects: number;
   activeProjects: number;
   totalPeople: number;
   activePeople: number;
   weekAttendance: number;
-  weekAbsent: number;
   weekLeave: number;
   weekHalalas: number;
   weekAttendanceDelta: number;
   weekHalalasDelta: number;
   weekLabel: string;
-  today: TodaySummary;
   endingSoon: EndingProject[];
   perProject: ProjectWeekSummary[];
   daily: DailyPoint[];
@@ -120,8 +109,6 @@ export interface UserRow {
 
 export const ROLE_LABELS: Record<Role, string> = {
   ADMIN: "مدير النظام",
-  MANAGER: "مشرف",
-  VIEWER: "مشاهد",
 };
 
 export const PERSON_TYPE_LABELS: Record<PersonType, string> = {
@@ -154,6 +141,17 @@ export interface TeamMember {
   active: boolean;
 }
 
+/** One open assignment with denormalized names for the quick-mark feed. */
+export interface OpenAssignment {
+  personId: string;
+  personName: string;
+  personActive: boolean;
+  projectId: string;
+  projectName: string;
+  projectStatus: ProjectStatus;
+  workingDays: string[];
+}
+
 export type WeekStatus = "OPEN" | "CLOSED" | "SETTLED";
 
 export const WEEK_STATUS_LABELS: Record<WeekStatus, string> = {
@@ -165,6 +163,7 @@ export const WEEK_STATUS_LABELS: Record<WeekStatus, string> = {
 export interface WeekDue {
   personId: string;
   personName: string;
+  type: PersonType;
   days: number;
   dueHalalas: number;
   paidHalalas: number;
@@ -177,6 +176,45 @@ export interface WeekPaymentRow {
   amountHalalas: number;
   paidAt: string;
   notes: string | null;
+}
+
+/** One open due of a worker in a specific project week. */
+export interface WorkerDue {
+  projectId: string;
+  projectName: string;
+  weekId: string;
+  weekNumber: number;
+  weekStartDate: string;
+  dueHalalas: number;
+  paidHalalas: number;
+}
+
+/** Full account statement of one worker across all projects and weeks. */
+export interface WorkerStatement {
+  personId: string;
+  personName: string;
+  dues: WorkerDue[];
+  payments: (WeekPaymentRow & { projectName: string; weekNumber: number })[];
+  totalDue: number;
+  totalPaid: number;
+  totalRemaining: number;
+}
+
+/** A PRESENT row elsewhere blocking a new payable mark (UNIQUE person+date). */
+export interface AttendanceConflict {
+  personId: string;
+  personName: string;
+  date: string;
+  existingProjectId: string;
+  existingProjectName: string;
+}
+
+/** A locked attendance day. */
+export interface DayCloseInfo {
+  projectId: string;
+  date: string;
+  closedBy: string;
+  closedAt: string;
 }
 
 export interface WeekSummary {

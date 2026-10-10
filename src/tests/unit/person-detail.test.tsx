@@ -38,7 +38,7 @@ const person: PersonDetail = {
 };
 
 const log: AttendanceRow[] = [
-  { id: "a2", personId: "p1", personName: "أحمد حسن", projectId: "pr1", projectName: "مشروع كمبوند الأوركيد", date: "2026-10-02", status: "ABSENT", dailyRate: 200, hours: 0, notes: "عذر طبي" },
+  { id: "a2", personId: "p1", personName: "أحمد حسن", projectId: "pr1", projectName: "مشروع كمبوند الأوركيد", date: "2026-10-02", status: "LEAVE", dailyRate: 200, hours: 0, notes: "عذر طبي" },
   { id: "a1", personId: "p1", personName: "أحمد حسن", projectId: "pr1", projectName: "مشروع كمبوند الأوركيد", date: "2026-10-01", status: "PRESENT", dailyRate: 200, hours: 1, notes: null },
 ];
 
@@ -60,9 +60,9 @@ describe("PersonDetailPage daily log", () => {
   it("renders log rows newest-first with status badges and notes", async () => {
     const { container } = renderPage();
     await waitFor(() => expect(screen.getByText("سجل اليوميات (2)")).toBeTruthy());
-    expect(screen.getByText("غائب")).toBeTruthy();
+    expect(screen.getByText("إجازة")).toBeTruthy();
     expect(screen.getByText("عذر طبي")).toBeTruthy();
-    expect(screen.getByText("0.00 ر.س")).toBeTruthy(); // absent day amounts zero
+    expect(screen.getByText("0.00 ر.س")).toBeTruthy(); // leave day amounts zero
     const dates = Array.from(container.querySelectorAll("tbody tr td[dir='ltr']")).map(
       (td) => td.textContent,
     );

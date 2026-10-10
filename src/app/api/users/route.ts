@@ -10,7 +10,7 @@ const createSchema = z.object({
   email: z.string().trim().email("البريد الإلكتروني غير صالح"),
   name: z.string().trim().min(2, "أدخل الاسم").max(100),
   password: z.string().min(8, "كلمة المرور ٨ أحرف على الأقل"),
-  role: z.enum(["ADMIN", "MANAGER", "VIEWER"]),
+  role: z.enum(["ADMIN"]),
 });
 
 function isAdmin(role: string | undefined) {

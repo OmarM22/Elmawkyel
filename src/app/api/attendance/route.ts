@@ -11,7 +11,7 @@ const batchSchema = z.object({
     .array(
       z.object({
         personId: z.string().min(1),
-        status: z.enum(["PRESENT", "ABSENT", "LEAVE"]),
+        status: z.enum(["PRESENT", "LEAVE"]),
         notes: z.string().max(500).optional(),
       }),
     )
@@ -34,7 +34,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
-  if (session.user.role !== "ADMIN" && session.user.role !== "MANAGER") {
+  if (session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "صلاحيات غير كافية" }, { status: 403 });
   }
   let body: unknown;

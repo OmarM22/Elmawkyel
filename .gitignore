@@ -25,3 +25,14 @@ Thumbs.db
 *.log
 *.tmp
 .opencode/
+
+# Archives / local bundles (large, not source)
+*.rar
+*.zip
+*.7z
+
+# Real data snapshot for client handover — contains personal data, never commit
+deploy/db/
+
+# Client delivery bundle (built by deploy/package-client.ps1)
+release/
